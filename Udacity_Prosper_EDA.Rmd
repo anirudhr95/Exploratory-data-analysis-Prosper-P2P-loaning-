@@ -1,0 +1,1926 @@
+---
+title: "Analysis of Prosper loan data"
+author: "Anirudh Ramesh"
+date: "October 28, 2016"
+output: html_document
+linkcolor : red
+urlcolor : red  
+---
+* * * * *
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+#Setting up libraries
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(maps))
+suppressPackageStartupMessages(library(lubridate))
+suppressPackageStartupMessages(library(RColorBrewer))
+suppressPackageStartupMessages(library(plotrix))
+suppressPackageStartupMessages(library(maps))
+
+```
+
+```{r , echo = FALSE}
+#Loading the data 
+
+loan <- read.csv('prosperLoanData_modified.csv')
+#This is a new csv file I created by renaming the header of the csv file using python
+#I found it way too difficult to rename 81 variable manually using rename() [See --> change_to_r.py]
+```
+
+
+```{r , echo = FALSE}
+
+loan$listing.creation.date <- strptime(x = as.character(loan$listing.creation.date) , 
+                                       format="%Y-%m-%d %H:%M:%S") #Convinient for extracting dates
+
+loan$year <- (loan$listing.creation.date$year + 1900)   #Extracting loan year
+
+loan$listing.creation.date <- as.character(loan$listing.creation.date) #Converting to character format
+
+# I found the dplyr package does not work properly with PosixXlt formats of date-time. Therefore, I'll extract # dates wherever neccesary and convert this column back to string after extraction.
+
+loan$prosper.rating...alpha. <- factor(loan$prosper.rating...alpha.,c("AA","A","B","C","D","E","HR") , 
+                                       ordered = T) #Converting to an ordered factors , for ggplot2
+
+loan$estimated.loss <- (loan$estimated.loss * 100) 
+
+loan$estimated.return <- (loan$estimated.return * 100)
+
+loan$estimated.effective.yield <- (loan$estimated.effective.yield * 100)
+
+loan$borrower.rate <- (loan$borrower.rate * 100)
+
+loan$borrower.a.p.r <- (loan$borrower.a.p.r * 100)
+
+loan$lender.yield <- (loan$lender.yield * 100)
+
+#I've converted to % because I  think it gives better readabilitys , plots are not in the 0-1 range for any axis.
+loan$income.range <- factor(loan$income.range , c('$0','$1-24,999','$25,000-49,999','$50,000-74,999','$75,000-99,999','$100,000+','Not displayed','Not employed'), ordered =T) #ordering factors for ggplot
+
+```
+
+
+* * * 
+The dataset is from a company that is involved in peer-to-peer loaning called [Prosper](https://www.prosper.com/) - the data has 113,937 rows over 81 variables.
+
+When I looked into the data , I was keen to know the __distribution__ of various variables - to help me get a sense of the data.
+
+*** 
+# Univariate plots
+#### Plot 1.
+##### Distribution of prosper alpha scores.
+```{r , echo = FALSE}
+
+loan.temp <- loan
+
+loan.temp$prosper.rating...alpha. <- ifelse(is.na(loan.temp$prosper.rating...alpha.),as.character(loan.temp$credit.grade), as.character(loan.temp$prosper.rating...alpha.))
+
+y <- (subset(loan.temp , !is.na(prosper.rating..numeric.)))
+
+#nrow(y)
+
+h <- hist(y$prosper.rating..numeric., breaks = c(0,1,2,3,4,5,6,7) , ylim = c(0,20000) , xlab = 'Rating - Numeric' , col = 'red' ,
+          main = 'Numeric Rating Histogram (Normal curve to scale)' ,
+          labels = c('HR','E','D','C','B','A','AA')) 
+
+xfit <- seq(min(y$prosper.rating..numeric.)-1 , max(y$prosper.rating..numeric.) , length = nrow(y))
+
+yfit <- dnorm(xfit, mean = mean(y$prosper.rating..numeric.), sd = sd(y$prosper.rating..numeric.))
+
+yfit <- yfit * length(y$prosper.rating..numeric.) *diff(h$mids[1:2]) * 1 
+
+lines(xfit,yfit,lwd = 2 , col = 'blue') # Plotting lines
+
+rm(y,h,xfit,yfit,loan.temp)
+
+#summary(loan$prosper.rating..numeric.)
+```
+
+This is a plot of Prosper rating alpha score - which is a proprietory number assigned to a borrow-request from an Individual. This is assigned based on various parameters (more on this to follow). I wanted to see the distribution of this rating over the population. 
+As expected , the rating system follows a __normal__ pattern , which is expected of a population - with different economical backgrounds.
+__Mean (4.072) > Median(4.00)__ therefore,  the distribution leans towards higher prosper alpha , but it is almost normal.
+
+#### Plot 2.
+##### Credit score distribution.
+```{r , echo = FALSE}
+loan$credit.score.exp <- ((loan$credit.score.range.lower + loan$credit.score.range.upper)/2)
+#creating new variable , taking the average
+
+normalized.data <- subset(loan ,!is.na(credit.score.exp))
+
+normalized.data$listing.creation.date <- as.character(normalized.data$listing.creation.date)
+#summary(loan$credit.score.exp)
+```
+
+I'm removing all the outliers (< 5% and > 95% quantile except for 'AA' rated individuals )
+This is because most AA rated individual had exceptionally high scores ( > 0.99 percentile) - and removing > 95th qunatile
+showed that the number of 'AA' had halved . 
+
+```{r , echo = FALSE , fig.width = 10 , fig.height = 8}
+
+normalized.data.new <- subset(normalized.data , 
+                  credit.score.exp > quantile(normalized.data$credit.score.exp, 0.05 , na.rm = TRUE) &                          credit.score.exp < quantile(normalized.data$credit.score.exp , 0.95 , na.rm = TRUE) &
+                    prosper.rating...alpha. != 'AA')
+
+normalized.data.aa <- subset(loan,prosper.rating...alpha. =='AA')
+
+normalized.data <- rbind(normalized.data.aa, normalized.data.new)
+
+rm(normalized.data.aa , normalized.data.new)
+
+#summary(normalized.data$prosper.rating...alpha.)
+#Removing extremes - mainly because summary(normalized.data$credit.score.exp) returned -9 as minimum 
+#which is entire possible for a borrower who is repeatedly delinquent - which doesnt help my plot!
+
+normalized.data$credit.bins <- cut(normalized.data$credit.score.exp , seq(609.5,889.5,15)) 
+#new variable - credit.bins <- which based on average credit score!
+
+normalized.data$prosper.rating...alpha. <- factor(normalized.data$prosper.rating...alpha.,c("AA","A","B","C","D","E","HR") , 
+                                       ordered = T)
+
+ggplot(data = subset(normalized.data,!is.na(credit.bins) & !is.na(prosper.rating..numeric.)) , aes(x = credit.bins)) + 
+  geom_bar(aes(fill = prosper.rating...alpha.)) +
+  guides(fill = guide_legend(reverse = TRUE)) + ggtitle('Plot of credit scores (bin wise)') + ylab('Frequency') + xlab('Average credit score') +
+  guides(fill=guide_legend(title="Alpha rating"))
+
+```
+
+This plot gives one important insight - as credit score increases , the prosper rating looks to be increasing for the better. After 774 credit score, exclusively 'AA' rated loans are available. Also , the ratio of 'HR' rated loans to the total number of loans looks to be decreasing as the credit range increases. The not so good prosper scores too , on the other hand (HR,E,D,C) seem to be decreasing with an increase in credit score.
+Also , on a closer look , every alpha scores are normal distributed themselves.
+
+#### Plot 3
+##### Ratio of HR rated loans.
+```{r , echo = FALSE}
+
+normalized.data.groups <- normalized.data %>%
+                                  group_by(credit.bins,prosper.rating...alpha.) %>%
+                                  summarise(n = n()) %>%
+                                  ungroup(prosper.rating...alpha.)
+normalized.data.groups.hr <- subset(normalized.data.groups , prosper.rating...alpha. ==  'HR') 
+
+normalized.data.group.total <- normalized.data %>%
+                               group_by(credit.bins) %>%
+                               summarise( n = n() ,
+                                          median_limit = median(credit.score.exp))
+normalized.data.group.total <- subset(normalized.data.group.total , median_limit < (789.5))
+
+normalized.data.groups.hr$n <- normalized.data.groups.hr$n / normalized.data.group.total$n
+#Getting proportion by diving
+
+ggplot(data = subset(normalized.data.groups.hr , !is.na(credit.bins)) , aes(x = credit.bins , y = n)) + geom_bar(stat = 'identity' ,aes(fill = I('aquamarine4'))) +ggtitle('Ratio of HR loans with credit(bin wise)') +
+  scale_y_continuous(breaks = seq(0,0.2,0.04) , labels = seq(0,0.2,0.04)) +
+  ylab('Ratio')
+
+rm(normalized.data.groups,normalized.data.group.total,normalized.data.groups.hr)
+
+```
+
+This shows that the ratio of 'HR' loans to total number of loans decreases steadily with increase in credit score. As a matter of fact, higher credit scores (> 775) have __zero__ high risk loans. 
+ 
+#### Plot 4.
+##### Employment status - Distribution.
+```{r , echo = FALSE}
+ggplot(data = subset(loan,(!is.na(employment.status)) & employment.status != '' & employment.status != 'Not available' ),
+       aes(x = employment.status)) +
+  geom_bar(aes(fill = I('dodgerblue3')) , color = I('red') , alpha = I(0.2)) + 
+  scale_y_continuous(breaks = seq(0,70000,5000) , labels = seq(0,70000,5000) ) +
+  xlab('Employment Status') +
+  ylab('Frequency') +
+  ggtitle('Employment Status - Frequency')
+```
+
+This is the distribution of the employment-status of the prosper borrowers. Prosper promises that even retired people can avail for a loan. The top 3 groups appear to be :
+1. Employed 
+2. Full-Time 
+3. Self employed respectively. 
+
+#### Plot 5.
+##### Employment status duration frequency.
+```{r , echo = FALSE , warning = FALSE , error = FALSE , fig.height = 8 , fig.width = 10}
+#summary(loan$employment.status.duration)
+
+suppressMessages(ggplot(data = loan , aes(x = employment.status.duration)) + geom_histogram(aes(fill = employment.status) , binwidth = 25) +
+  scale_x_continuous(breaks = seq(0,550,25) , labels = seq(0,550,25))  + ylab('Frequency') +
+  ggtitle('Employment status duration frequency') + xlab('Employment status duration'))
+```
+
+Employment duration status looks to be positively skewed with Mean 96.07 > Median 67.00. 
+
+#### Plot 6.
+##### Credit Lines frequency.
+```{r , echo = FALSE , fig.height = 8 , fig.width = 10 , warning = FALSE}
+suppressWarnings(ggplot(data = loan , aes(x = current.credit.lines)) + geom_histogram(aes(fill = employment.status)) +
+  scale_x_continuous(breaks = seq(0,40,2) , labels = seq(0,40,2)) +
+ ggtitle('Plot of Credit Lines vs frequency') + 
+  xlab('Current credit Lines') +
+  scale_y_continuous(breaks = seq(0,20000,4000) , labels = seq(0,20000,4000))) +
+  xlim(0,40)
+#summary(loan$current.credit.lines)
+#by(loan$current.credit.lines,loan$employment.status,summary)
+```
+
+Current credit lines also follows a pretty normal distribution.  This peaks at 59.00. 'Employed' category in general , have more credit lines open.
+
+#### Plot 7.
+##### Loan Listing category frequency.
+```{r , echo = FALSE, fig.width = 10 , fig.height = 8}
+transform_listing_category <- function(x)
+{
+  y = NA
+  if(is.na(x)){
+   y =  NA
+  }
+  if(x == 1){
+    y ='Debt Consolidation'
+  }
+  if(x == 2){
+    y = 'Home Improvement'
+  }
+  if(x == 3){
+    y = 'Business'
+  }
+  if(x == 4){
+    y = 'Personal loan'
+  }
+  if(x == 5){
+    y = 'Student Use'
+  }
+  if(x == 6){
+    y = 'Auto'
+  }
+  if(x == 7){
+    y = 'Other'
+  }
+  if(x == 8){
+    y = 'Baby & Adoption'
+  }
+  if(x == 9){
+    y = 'Boat'
+  }
+  if(x == 10){
+    y = 'Cosmetic Procedure'
+  }
+  if(x == 11){
+    y = 'Engagement Ring'
+  }
+  if(x == 12){
+    y = 'Green Loans'
+  }
+  if(x == 13){
+    y = 'Household expenses'
+  }
+  if(x == 14){
+    y = 'Large purchases'
+  }
+  if(x == 15){
+    y = 'Medical/Dental'
+  }
+  if(x == 16){
+    y = 'Motorcyle'
+  }
+  if(x == 17){
+    y = 'RV'
+  }
+  if(x == 18){
+    y = 'Taxes'
+  }
+  if(x == 19){
+    y = 'Vacation'
+  }
+  if(x == 20){
+    y = 'Wedding loans'
+  }
+  return(y)
+}
+loan$listing.category <- lapply(loan$listing.category..numeric.,transform_listing_category)
+
+loan$listing.category <- factor(loan$listing.category, c('Debt Consolidation' ,'Home Improvement' , 'Business' , 'Personal Loan' , 'Student Use' , 'Auto','Other' , 'Baby & Adoption' , 'Boat', 'Cosmetic Procedure' , 'Engagement Ring', 'Green Loans' , 'Household expenses' , 'Large purchases' ,'Medical/Dental' , 'Motorcycle','RV','Taxes','Vacation','Wedding loans' ) , ordered = T)
+
+ggplot(data = loan , aes(x = listing.category)) + geom_bar(aes(fill = I('lightslateblue'))) +
+  scale_x_discrete(labels = abbreviate) +
+  xlab('Listing category') + ylab('Frequency') +
+  ggtitle('Loan Listing category vs Frequency') 
+
+
+rm(transform_listing_category)
+```
+
+The top 3 reason for borrowing are :
+1. Debt consolidation
+2. Other
+3. Home Improvement.
+But if we include listing which are not classified , they make #2 highest. I wanted to explore the reason behind this.
+
+#### Plot 8.
+```{r , echo = FALSE , fig.height = 8 , fig.width = 10}
+loan$listing.creation.date <- as.character(loan$listing.creation.date)
+listing.groups <- loan %>%
+                  group_by(year,listing.category) %>%
+                  summarise(n = n()) %>%
+                  ungroup(year)
+ggplot(data = listing.groups , aes(x = year ,y = n)) +
+  geom_bar(aes(fill = listing.category),stat = 'identity') + 
+ scale_x_continuous(breaks = seq(2005,2014,1) , labels = seq(2005,2014,1)) + ylab('Frequency') +
+  ggtitle('Number of loans vs Year') +
+  scale_y_continuous(breaks = seq(0,38000,2000) , labels = seq(0,38000,2000)) 
+rm(listing.groups)
+```
+
+Until 2008 (and including some parts of 2008) some of the loans listing reasons were not listed or bothered with. Hence the huge number of NA's. This explains the unlisted loans.
+ 
+#### Plot 9.
+##### Loan status distribution.
+```{r , echo = FALSE, fig.width = 10 , fig.height = 8 , warning = FALSE}
+
+loan$status <- ifelse(startsWith(as.character(loan$loan.status),'Past') , 'Past Due' , as.character(loan$loan.status))
+
+ggplot(data = subset(loan , !is.na(prosper.rating...alpha.) &! prosper.rating...alpha. %in% c('NC','')) , aes(x = status)) + geom_bar(aes(fill = prosper.rating...alpha.)) + ylab('Frequency') + ggtitle('Distribution of loan status') + xlab('Loan Status') + guides(fill=guide_legend(title="Alpha rating"))
+
+pi.plot <- subset(loan , !is.na(prosper.rating...alpha.) &! prosper.rating...alpha. %in% c('NC','')) %>%
+            group_by(status) %>%
+            summarise(n = n()) 
+
+pie(pi.plot$n ,labels =  pi.plot$status , explode = 0.2)
+
+rm(pi.plot)
+```
+
+Next , I was interested in looking into the distribution of the loan status. I found that most loans were 'Current' , followed by 'Completed' and 'Chargedoff'. Now that I know how the loans are distributed,  how does Prosper 'Alpha' rating play into this i.e Intiutively , I wanted to know , what does Alpha rating stand for - in a market place.
+
+#### Plot 10.
+##### Defaulting rate by prosper alpha score.
+```{r , echo = FALSE}
+
+rating.wise.status <- subset(loan , !is.na(prosper.rating...alpha.)) %>%
+                      group_by(prosper.rating...alpha. , status) %>%
+                      summarise(n = n()) %>%
+                      ungroup(status)
+
+ggplot(data = rating.wise.status , aes(x = prosper.rating...alpha. , y = n))  + 
+  geom_bar(aes(fill = status) , stat = 'identity') + xlab('Prosper alpha rating') + 
+  ylab('Frequency') + scale_y_continuous(breaks = seq(0,20000,4000) , labels = seq(0,20000,4000))  +
+  ggtitle('Distribution of Prosper alpha rating') + scale_fill_brewer(palette = 'Set2')
+
+#Clea this shiz up
+rm(rating.wise.status)
+```
+
+This is as expected. A prosper 'HR' loan is always going to default ('Chargedoff') more than a 'AA' loan , which hardly look to have defaulted. And this indicates the effectiveness of Prosper's 'Alpha' rating. But I see something amiss.
+'D's seem to have been Chargedoff more than 'HR's (Albiet by very little!). Looking into prosper activites may give some useful insights into this.
+
+I decided I'll look into Prosper activites from the very beginning. This should clear up any discrepancies I have about the data.
+
+#### Plot 11.
+```{r , echo = FALSE}
+prosper.activity <- loan %>%
+                          group_by(year) %>%
+                          summarise(n = n())
+
+ggplot(data = prosper.activity , aes(x = year ,y = n)) + geom_line() +
+  scale_x_continuous(breaks = seq(2005,2016,1) , labels = seq(2005,2016,1)) + geom_point() +
+ggtitle('Borrowing activity for Prosper by year') + ylab('Frequency')
+```
+
+Here , I decided to extract the loans by their creation date and plot borrowing activity by year. 
+Once prosper hit the market in 2005 , it looks to have gained constant traction. Until it starts to fall in 2008 and plummets to its lowest value in 2009. This makes sense because of the SEC investigation which had halted prosper activities until prosper re-opened their new site (with a new Prosper rating system). More info about that [here.](https://en.wikipedia.org/wiki/Prosper_Marketplace#Cease_and_desist_order).
+
+#### 12.
+```{r , echo = FALSE}
+
+current.year <- subset(loan,year == 2014)
+current.year$listing.creation.date <- strptime(x = as.character(current.year$listing.creation.date) , format="%Y-%m-%d %H:%M:%S")
+current.year$month <- as.character(current.year$listing.creation.date$mon+1) 
+current.year$listing.creation.date <- as.character(current.year$listing.creation.date)
+unique(current.year$month)
+
+```
+
+This clearly states the unique months available during 2014. (Jan , Feb and Mar)
+
+The sudden plummet is 2014 I found was due to the fact that , the data was only available till Mar-2014. But I am not interested in the statistic of whether the mean(actvitiy) for the first three month of Mar-2014 was higher than other years (in all likelyhood , it is).
+
+Now , The reason the D's may have been chargedoff than HRs is not very straight forward. If everything was perfect with the rating system , this shouldn't have happened. Therefore,  I decided to take a look at defaulting ('Chargedoff' ) rates for any given year.
+
+#### Plot 13.
+```{r , echo = FALSE}
+rm(current.year)
+delinquency.rate <- subset(loan , status == 'Chargedoff')
+delinquency.rate$ListingCreationDate <- as.character(delinquency.rate$listing.creation.date)
+delinquency.by.year <- delinquency.rate %>%
+                                          group_by(year) %>%
+                                          summarise(n = n())
+delinquency.by.year$total <- c(6326,11557,11263,2206,5530,11442,19556,35413)
+
+ggplot(data = delinquency.by.year , aes(x = year , y = n/total)) + geom_line() + 
+  scale_x_continuous(breaks = seq(2005,2016,1) , labels = seq(2005,2016,1)) + geom_point() + ggtitle('Chargedoff loans in Prosper by Year') + ylab('Ratio of charged to total loan')
+
+rm(delinquency.by.year,delinquency.rate,prosper.activity)
+```
+
+This is the ratio of defaulting/total number of loans for any given year. Initially without the Prosper system in place , the lenders might have invested in loans which have high Effective Return estimate - without understanding the risk; which explains the initial rise in chargeoffs(in 2007) and as more people understand the risks towards the end of 2007 (chargeoffs take atleast 150 days , therefore , I presume lender learn a good deal about the prosper environment within the first half of 2007) , the chargeoff rate looks to have dropped.
+
+But after the SEC Investigation , Prosper with its new site & systems , should have minimized the % of chargeoffs, but this is not true until 2011. I have a hunch this is maily because Prosper's 'ALPHA' rating algorithm lacks experience at this point and predicts much like the 2007-2009 algorithm , and not like one would want to. Alright , Let me see how it has fared in the years.
+
+#### Plot 14.
+```{r , echo = FALSE}
+loan.2011 <- subset(loan , year == 2011 & !is.na(prosper.rating..numeric.))
+
+loan.2013 <- subset(loan , year == 2013 & !is.na(prosper.rating..numeric.))
+
+loan$listing.creation.date <- as.character(loan$listing.creation.date)
+
+loan.2011.groups <- loan.2011 %>%
+                                group_by(prosper.rating...alpha.) %>%
+                                summarise(n = n())
+
+loan.2011.groups$ratio <- ((loan.2011.groups$n / 11442) * 100)
+
+loan.2011.groups$year <- 2011
+
+
+loan.2013.groups <- loan.2013 %>%
+                               group_by(prosper.rating...alpha.) %>%
+                               summarise(n = n())
+
+loan.2013.groups$ratio <- ((loan.2013.groups$n / 35413) * 100)
+
+
+loan.2013.groups$year <- 2013
+
+loan.groups <- rbind(loan.2011.groups,loan.2013.groups)
+
+
+
+ggplot(data = loan.groups , aes(x = prosper.rating...alpha. , y = ratio)) + geom_bar(stat = 'identity' ,
+                                                                             aes(fill = I('lightpink3'))) +
+  facet_wrap(~year , scales = 'free') + ylab('% of loans') + xlab('Prosper Alpha scores') + 
+  ggtitle('Distribution of alpha scores by year')
+
+rm(loan.2011.groups,loan.2013.groups)
+
+```
+
+I was pretty close. The distribution of Prosper's 'ALPHA' ratings in 2011 and 2013 are _almost_ mirror images of each other. There are lot more poor('D's,'E's, and 'HR's) alpha scores in 2011 and the general distribution is more towards the lower end. In 2013 , The better alpha scores , seemed to have gained a good strength. This makes sense - since not only are the lenders new to this system of lending by judging through Alpha scores, the available prospects themselves don't help a lender! 
+
+#### Plot 15.
+```{r , echo = FALSE }
+loan$listing.creation.date <- strptime(x = as.character(loan$listing.creation.date) , 
+                                       format="%Y-%m-%d %H:%M:%S")
+ggplot(data = subset(loan.groups , prosper.rating...alpha.!='C') , aes(x = prosper.rating...alpha. , y = ratio)) +
+  geom_bar(stat = 'identity' ,aes(fill = I('lightpink3'))) +
+  facet_wrap(~year , scales = 'free') + ggtitle('Alpha rating distribution by year') +
+  xlab('Prosper alpha rating')
+rm(loan.groups)
+```
+
+Here I'm removing the 'C' rated scores. The distribution now look almost like mirror imagfes of each other (in their ratings).
+Now that I've found the reason why 'D's are shown are charged-off more than HR. During early years , D's were simply avaiable more than any other loans. Given 'D's are Medium risk - medium rewards loans , it is likely 60% of them were charged off, hence they make a more number than 'HR's (Simply because they were available more).
+
+#### Plot 16.
+```{r , echo = FALSE , fig.width = 9 , fig.height = 8}
+
+ggplot(data = subset(loan,year>2010 & year < 2014) , aes(x = prosper.rating...alpha.)) + geom_bar(stat = 'count' , aes(fill = status)  ) + facet_wrap(~year) + scale_fill_brewer(palette = 'Set1') + xlab('Prosper alpha rating') + ylab('Frequency') + ggtitle('Prosper distribution after alpha scores are established')
+
+``` 
+
+Here we see, both more number of D's as well as as more chargeoffs in D. But that keep changing with every year , as fewer loans are chargedoff and the distribution is becoming more normal.
+
+Since I was already this far , I wanted to know how the chargeoff rate was corrected/managed by prosper. Surely, after initial stages of 2011 , the lenders might have gotten a good idea but , but how are lenders able to decide on which loans to invest i.e How is prosper facilitating investing on better quality of loans - making the distributon more normal ?
+Looking into the chargedoff loans might help.
+
+Also , the peak in 2013 is due to Prosper starting [Initial retirment attrangement](http://www.lendacademy.com/you-can-now-open-a-prosper-ira/) - This had a minimum amount of $10,000 drastically improving the marketplace structure.
+
+#### Plot 17.
+```{r , echo = FALSE}
+loan.2011.chargedoff <- subset(loan.2011, status == 'Chargedoff')
+
+loan.2013.chargedoff <- subset(loan.2013, status == 'Chargedoff')
+
+loan.2011.chargedoff$listing.creation.date <- as.character(loan.2011.chargedoff$listing.creation.date)
+
+loan.2013.chargedoff$listing.creation.date <- as.character(loan.2013.chargedoff$listing.creation.date)
+
+loan.2011.chargedoff.groups <- loan.2011.chargedoff %>%
+                                                    group_by(prosper.rating..numeric.) %>%
+                                                    summarise( n = n())
+
+loan.2013.chargedoff.groups <- loan.2013.chargedoff %>%
+                                                      group_by(prosper.rating..numeric.) %>%
+                                                      summarise( n = n())
+loan.2011.chargedoff.groups$year <- 2011
+
+loan.2013.chargedoff.groups$year <- 2013
+
+loan.chargedoff.groups <- rbind(loan.2011.chargedoff.groups , loan.2013.chargedoff.groups)
+
+rm(loan.2013.chargedoff.groups,loan.2011.chargedoff.groups)
+
+ggplot(data = loan.chargedoff.groups , aes(x = prosper.rating..numeric. , y = n)) + 
+  geom_bar(stat = 'identity' , aes(fill = I('indianred3'))) +
+  facet_wrap(~year , scales = 'free_x') +ggtitle('Ratio of loans defaulting - by year 2011 vs 2013') +
+  xlab('Prosper numeric rating (1 - HR , 7 - AA)') +
+  ylab('Frequency')  +
+  scale_x_continuous(breaks = seq(0,7,1) , labels = seq(0,7,1))
+
+
+```
+
+The chargedoff indeed have gone down dramatically. I was curious how this was achieved. Has prosper helped investing in safer loans ? Or does it penalise investing in riskier loans. Infact in the year , 2013 , there is no chargeoffs from AA rated loan(Numeric - 7). This established how important an alpha score is while looking to lend.
+
+#### Plot 18.
+```{r , echo = FALSE}
+loan.hr.2011.check <- subset(loan.2011 , prosper.rating...alpha. == 'HR')
+loan.hr.2013.check <- subset(loan.2013 , prosper.rating...alpha. == 'HR')
+
+returns <- loan.hr.2011.check$estimated.return
+loan.hr.2011 <- data.frame(returns)
+loan.hr.2011$year <- 2011
+
+returns <- loan.hr.2013.check$estimated.return
+
+loan.hr.2013 <- data.frame(returns)
+loan.hr.2013$year <- 2013
+
+loan.hr <- rbind(loan.hr.2013,loan.hr.2011)
+
+rm(loan.hr.2011, loan.hr.2013,returns)
+
+ggplot(data = loan.hr , aes(x = as.character(year) , y = returns)) + 
+  geom_boxplot() +xlab('year') + ggtitle('Return for HR rated loan in 2011 vs 2013')
+
+rm(loan.2011.chargedoff,loan.2013.chargedoff,loan.hr,loan.hr.2011.check,loan.hr.2013.check,loan.chargedoff.groups, loan.2011 , loan.2013)
+```
+
+This is a plot of estimated returns for a HR loan , in the year 2011 and 2013. We can see the spread of return % to be much higher in the year 2011 than 2013. There are more return percents above the median too (in the year 2011). For the same HR category loan in 2011 and 2013 , the return is very different . 
+This new prosper evaluation might have resulted in decreased chargeoff. (Estimated median return of 11.47 percent in 2011 vs 8.92% in 2013). Thus by reducing the estimate rate and making it closer to the next/previous prosper alpha categories , prosper sets an incentive to invest in a safer loan , while also making a good amount of profit(effective return).
+
+Also , I found out the estimated effective yeild of better prosper scores were smaller compared to the worse ones. More on that in [two-variable plot.](#alpha-rating-vs-estimated-effective-yeild)
+
+__(Keeping two variable plot of returns vs year here)__
+
+#### Plot 19.
+```{r , echo = FALSE}
+loan.2013 <- subset(loan , year == 2013)
+loan.2011 <- subset(loan , year == 2011)
+
+loan.2011 <- subset(loan.2011 , status == 'Chargedoff')
+loan.2013 <- subset(loan.2013 , status == 'Chargedoff')
+
+employment.final <- rbind(loan.2011 , loan.2013)
+rm(loan.2011 , loan.2013)
+
+employment.final <- subset(employment.final , employment.status != 'Not available')
+ggplot(data = employment.final , aes(x = employment.status)) + geom_bar(stat = 'count' , aes(fill = income.range)) +
+  facet_wrap(~year) + scale_x_discrete(labels = abbreviate) +
+  xlab('Employment Status') +
+  ylab('Frequency') +
+  ggtitle('Employment Status Frequency in 2011 , 2013')
+
+#by(employment.final$employment.status , employment.final$year , summary)
+#This and verifiable income
+rm(employment.final)
+```
+
+In both the years,  full-time and part-time employees seemed to have defaulted the least compartively. Having a good source of income and employment looks like a good parameter to take into account while computing prosper alpha rating.
+
+#### Plot 20.
+##### Borrowers' rate for alpha score.
+```{r , echo = FALSE}
+loan$rate.bin <- cut(loan$borrower.a.p.r,c(10,20,30,40,50,60))
+ggplot(data = subset(loan,!is.na(rate.bin) & !is.na(prosper.rating...alpha.)) , aes(x = rate.bin)) + geom_bar(aes(fill = I('cyan3'))) + 
+ facet_wrap(~prosper.rating...alpha. , scales = 'free')  +
+ ylab('Frequency')  + xlab('Borrower APR Split') + ggtitle('Rates by Prosper rating')
+```
+
+This is the distribution of borrower's APR by their Alpha score. It is clear that the higher alpha scores get lower APR. This is because not only do they pay a smaller fee compared to the other categories , they also have smaller interest rates! (since lender gets fewer yields due to the fact that risk/reward is little)
+
+#### Plot 21.
+##### Debt to income ratio frequency.
+```{r , echo = FALSE}
+debt <- subset(loan , debt.to.income.ratio > quantile(loan$debt.to.income.ratio , 0.01 , na.rm = TRUE) & debt.to.income.ratio < quantile(loan$debt.to.income.ratio , 0.95 , na.rm = TRUE))
+
+#summary(debt$debtToIncomeRatio).
+
+debt$debt.bin <- cut(debt$debt.to.income.ratio , c(0,0.1,0.2,0.3,0.4,0.5))
+
+ggplot(data = debt , aes(x = debt.bin)) + geom_bar(aes(fill = status)) + ggtitle('Debt to income ratio (bin wise)') + xlab('Debt to income ratio') + ylab('Frequency') + scale_fill_brewer(palette = 'Set3')
+
+#summary(debt$debt.to.income.ratio)
+```
+
+Most people have debt-to income ratio in the 0.1 - 0.2 range. __Mean 0.22 > Median 0.21__ ,distribution is almost normal.
+
+#### Plot 22.
+##### Employment status distribution.
+```{r , echo = FALSE , fig.height = 8 , fig.width= 10}
+ggplot(data = subset(loan,employment.status!='') , aes(x = income.range)) + geom_bar(aes(fill = employment.status)) + xlab('Income range') + ylab('Frequency') + ggtitle('Income distribution') + 
+  scale_fill_brewer(palette = 'Set2')
+#unique(loan$income.range)
+
+
+```
+
+The top 3 income ranges are : 
+1. $25,000 - 49,000
+2. $50,000 - 74,999
+3. $100,000+
+
+#### Plot 23.
+```{r , echo = FALSE}
+
+ggplot(data = loan , aes(x = prosper.rating...alpha.)) + geom_bar(aes(fill = is.borrower.homeowner)) + 
+  xlab('Prosper alpha rating') + ylab('Frequency') + ggtitle('Plot of homeowners by Alpha score')
+
+```
+
+% of home-owners is higher for better alpha scores and looks to be receding for worse alpha scores.
+
+#### Plot 24.
+```{r , echo = FALSE}
+
+loan$listing.creation.date <- as.character(loan$listing.creation.date)
+homeowner.groups <- subset(loan,!is.na(is.borrower.homeowner)) %>%
+                    group_by(prosper.rating...alpha.,is.borrower.homeowner) %>%
+                    summarise(n = n()) %>%
+                    ungroup(prosper.rating...alpha.)
+
+homeowner.groups.false <- subset(homeowner.groups , is.borrower.homeowner == 'False')
+homeowner.groups.true  <- subset(homeowner.groups , is.borrower.homeowner == 'True')
+
+homeowner.groups.final <- homeowner.groups.true$n / (homeowner.groups.true$n + homeowner.groups.false$n)
+homeowner.prosper.rating...alpha.  = homeowner.groups.true$prosper.rating...alpha.
+
+rm(homeowner.groups , homeowner.groups.false, homeowner.groups.true)
+
+homeowner.final <- data.frame(homeowner.groups.final,homeowner.prosper.rating...alpha.)
+
+rm(homeowner.groups.final,homeowner.prosper.rating...alpha.)
+
+ggplot(dat = subset(homeowner.final,!is.na(homeowner.prosper.rating...alpha.)) , aes(x = homeowner.prosper.rating...alpha. , y = homeowner.groups.final)) + geom_bar(stat = 'identity', aes(fill = I('lightslategrey'))) + 
+  xlab('Alpha rating') + ylab('% of homeowners') + ggtitle('Homeowners by Alpha scores')
+
+rm(homeowner.final)
+```
+
+Evidently , the ratio of homeowners is higher for higher prosper alpha scores. HR rated loans have more % of homeowners compared to D and E rated loans , which I found out was because most loans were rated Hr [due to income source being unverified](#plot-26.).
+
+#### Plot 25.
+```{r , echo = FALSE}
+income.ver.groups <- loan %>%
+                      group_by(prosper.rating...alpha.,income.verifiable) %>%
+                      summarise(n = n()) %>%
+                      ungroup(prosper.rating...alpha.)
+
+income.ver.groups <- subset(income.ver.groups , !is.na(prosper.rating...alpha.))
+
+
+ggplot(data = income.ver.groups , aes(x = prosper.rating...alpha. , y = n)) + geom_bar(stat = 'identity' ,
+                                                                                       aes(fill = income.verifiable)) + scale_fill_brewer(palette = 'Set1') + ggtitle('Income group by Alpha score') + 
+  xlab('Alpha ratings') + ylab('Frequency')
+
+```
+
+Income verifiable by prosper score. % of verifiable income per alpha score is higher for better alpha scores. Let me verify by calculating % of loans with income unverified.
+
+#### Plot 26.
+```{r , echo = FALSE}
+alpha.groups <- loan %>%
+                group_by(prosper.rating...alpha.) %>%
+                summarise(n = n())
+
+divide <- function(x)
+{
+  y = NA
+  
+  if(x == 'AA') 
+    y = alpha.groups[1,2]
+  if(x == 'A')
+    y = alpha.groups[2,2]
+  if(x == 'B')
+    y = alpha.groups[3,2]
+  if(x == 'C')
+    y = alpha.groups[4,2]
+  if(x == 'D')
+    y = alpha.groups[5,2]
+  if(x == 'E')
+    y = alpha.groups[6,2]
+  if(x == 'HR')
+    y = alpha.groups[7,2]
+  
+  return(y)
+}
+alpha.groups <- subset(alpha.groups , !is.na(prosper.rating...alpha.))
+
+income.ver.groups$new_n <- lapply(income.ver.groups$prosper.rating...alpha.,divide)
+
+income.ver.groups$new_n <- lapply(income.ver.groups$new_n , function(x) as.numeric(x[1]))
+
+rm(alpha.groups,divide)
+
+income.ver.groups$n <- as.numeric(income.ver.groups$n)
+
+income.ver.groups$new_n <- as.numeric(income.ver.groups$new_n)
+
+income.ver.groups$n <- (income.ver.groups$n / income.ver.groups$new_n)
+
+ggplot(data = subset(income.ver.groups , income.verifiable == 'False') , aes(x = prosper.rating...alpha. , y = n)) + geom_bar(stat = 'identity' , aes(fill = I('deeppink4'))) +
+  xlab('Alpha rating') + ylab('% of income unverified') +
+  ggtitle('% of loans with unverified incomes')
+
+rm(income.ver.groups)
+
+```
+
+AA rated scores on average have 3 in 100 loans without income verified , whereas for HR rated loans , nearly 17.5% of the loans have income unverified. Clearly this is a major factor in determining alpha score.
+
+
+#### Plot 26.
+##### State-wise distribution of borrower's city (loan origin)
+```{r , echo = FALSE , fig.height=8 , fig.width = 10}
+states_present <- subset(loan,borrower.state !='')
+all_states <- map_data('state') #Only use is for map polygon
+data(state)
+final_frame <- states_present %>%
+                                group_by(borrower.state) %>%
+                                summarise(n = n()) 
+
+colnames(final_frame)[which(names(final_frame) == "borrower.state")] <- "state.abb"
+
+states <- data.frame(state.abb, state.name, state.area, state.center,
+                     state.division, state.region, state.x77)
+
+final_frame <- merge(final_frame,states,by = 'state.abb')
+p <- ggplot()
+p <- p + geom_polygon( data=all_states, aes(x=long, y=lat, group = group),colour="white", fill="grey10" )
+#Everything looks good.
+p + geom_point(data = final_frame,  aes(x = x , y = y , size = (n* 1.5)) , color = 'coral3') + 
+  geom_text(data = states, aes(x     = x, 
+                               y     = y, 
+                               label = state.abb,
+                               group = NULL), 
+            size = 3, 
+            colour="white") + coord_map() + ggtitle("Geographic distribution of Borrowers")
+
+
+#rm(P1)
+#rm(stateFromLower)
+rm(all_states)
+rm(states_present)
+
+rm(final_frame , state.x77 , states , p ,state.abb , state.area , state.center , state.division , state.name , state.region)
+
+
+```
+Most borrower's seem to use prosper from CA , NY ,IL and TX.
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+
+There were few plots which had really piqued my interest - namely plots {[Plot 2](#plot-2.) , [Plot 3](#plot-3.) , [Plot 10](#plot-10.) , [Plot 14](#plot-14.) , [Plot 15](#plot-15.) , [Plot 17](#plot-17.) , [Plot 20](#plot-20.) , [Plot 26](#plot-26.) }
+where I used the 'fill' parameter for alpha scores and these indicated a strong trend. 
+
+From my exploration , I find that - 
+
+1. Employment status
+2. Income range
+3. Status of income Verification (Verified / Unverified)
+4. Homeowner (Y / N)
+5. Debt to income ratio
+6. Monthly loan payments and
+7. Stated monthly income
+
+indicate pretty strong trend for all the prosper scores. Therefore , these may decide other factors of the loan (like borrower rate , days to fund etc. ) . In two-variable plots , I intend to explore these.
+
+### Did you create any new variables from existing variables in the dataset?
+
+Yes. I created quite a few.
+
+1. Year : Extracting year from listing.creation.date (Datetime to date)
+
+2. credit.score.exp : Average of upper and lower credit score.
+
+3. closed.month : Month when the loan was closed. Relevant for chargedoff / Completed loans only.
+
+4. funded.date : loan.origination.date , but in date format , instead of datetime.
+
+5. days.to.fund : loan.origination.date - listing.creation.date (Date from datetime)
+
+6. rate.bin : I used cut and created a categorical rate.bin variable from borrower.apr , this way the                 trends were much clearer.
+
+7. Status : Converted past-due(0-15 days , 15-30 days etc..) all to 'Past due'
+
+8. Listing category : Used the legend from prosper and converted from number to corresponding category.
+
+9. Inquiries.bin : Using cut on variable total.inquiries (In two-variable plots)
+
+10. credit.lines : Using cut on open credit lines. (In two-variable plots)
+
+I've also created multiple temporary dataframe , where I follow the following convention :
+
+  1. x <- dataframe created for variable x
+  2. x.groups <- I have use dplyr group_by on x variable .
+  3. x.groups.y <- I have used dplyr group_by on x and subsetted variable y.
+  
+### What is/are the main feature(s) of interest in your dataset?
+
+My main feature of interest were the alpha scores. The alpha scores were decided using many other parameters and hence showed a strong trend if I tried plotting it with any other determining parameter.
+This is where I realised , plotting alpha vs any other parameter will pretty much yeild some result and will not help me discover any trends in data. Therefore , I've decided to see how each individual parameter affect the alpha score on their own.
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+
+Yes. Many of the plot wouldn't have yeilded the results they did , if I plotted from the data straight up. For example , Making __borrower rate__ a categorical variable from numerical , indicated how [alpha scores give better rates](#plot-20.) Similarly , Plotting credit scores , that too bin-wise(again from categorical from numerical form) indicated how [higher bins have higher alpha scores only](#plot-2.) , much more clearly than a scatter plot ever could. This kind of operation is done throughout the analysis , even in two variable plots. 
+
+Other aspect of this is removing outliers using 'quantile' function - where I could observe a much stronger correlation and hence , better looking plots. 
+
+Also, various operation for converting column from one form (numeric --> Characters and vice versa) are done to support the immediate need. I've also mentioned creating new dataframe temporarily on need-only-basis so as to not modify the main data and [I've also given the convention I've used for it](#did-you-create-any-new-variables-from-existing-variables-in-the-dataset)
+
+# Two variable plots
+
+#### 1.What are the effective yeilds of various alpha scores?
+```{r , echo = FALSE}
+loan.2013 <- subset(loan , year == 2013)
+
+ggplot(data = loan.2013 , aes(x = prosper.rating...alpha. , y = estimated.effective.yield)) + geom_boxplot() +
+  xlab('Prosper Alpha scores') + ggtitle('Effective yeild vs Prosper alpha scores')
+
+#by(loan.2013$estimated.loss , loan.2013$prosper.rating...alpha. , summary)
+
+```
+
+##### [Go back](#plot-20.)
+
+After analysing HR loans from 2011 and 2013 , this was pretty straight foward. Prosper offers higher effective yeild to higher risk loans. But , the [estimated effective yeild](http://www.lendacademy.com/explaining-expected-default-rate-and-estimated-loss-rate/) - is very bad for HR loans. (15.75 median loss rate) - i.e a large portion of the promised return (offered from borrower) is lost to prosper fees. Also , loss % is very high , due to the nature of the risk.
+Conviniently prosper offers a minimum of $25 to invest in a given loan. Thus , among HR loans , lenders can invest in those which offer smaller yeilds (compared to the ones which offer better yield - which in case of HR would only mean more risk) - this is only supported by shortening of spread in the previous graphs (Boxplot with spread of return % in 2011 vs 2013). Also, this helps diversify lender investments.  
+This helps in diversifying investments making the distribution more normal.
+
+```{r , echo = FALSE , eval = FALSE}
+
+cor.test(loan.2013$prosper.rating..numeric.,loan.2013$estimated.effective.yield)
+
+lmfit <- lm(estimated.effective.yield ~ prosper.rating..numeric. , loan.2013)
+
+summary(lmfit)
+
+rm(lmfit)
+
+```
+
+Correlation between Prosper rating and Effective yeild is : __-0.96__ which is pretty strong. Meaning , higher prosper rating give lower returns. 
+
+Also , the $r^{2}$ value is 0.9339 , meaning most of the variance in the estimated effective yield is explained by the prosper alpha scores.
+
+#### 2. Loan original amount vs Debt to income ratio relation :
+```{r , echo = FALSE}
+
+rm(loan.2013)
+
+ggplot(data = debt , aes(x = debt.bin , y = loan.original.amount)) + geom_boxplot() +
+  xlab('Debt to income ratio') + ylab('Loan original amount') + ggtitle('Loan original amount vs Debt to income ratio')
+
+```
+
+This is as expected. People have higher debt-income ratio because they have higher loan amount.
+
+```{r ,echo = FALSE , eval = FALSE}
+
+debt.temp <- subset(debt , loan.original.amount >quantile(debt$loan.original.amount , 0.05 , na.rm = TRUE) & loan.original.amount < quantile(debt$loan.original.amount , 0.95 , na.rm = TRUE))
+
+cor.test(debt.temp$debt.to.income.ratio , debt.temp$loan.original.amount)
+
+lmfit <- lm(loan.original.amount ~ debt.to.income.ratio , debt.temp)
+
+summary(lmfit)
+
+rm(lmfit , debt.temp)
+```
+
+But they are not strong correlated (_r value_ of 0.1352 and $r^{2}$ value of 0.01829).
+
+#### 3.Monthly loan payment vs Debt to income ratio :
+```{r , echo = FALSE , fig.width = 10 , fig.height = 8}
+
+ggplot(data = debt , aes(x = debt.bin , y  = monthly.loan.payment)) + geom_boxplot() +
+  facet_wrap(~term) +  ggtitle('Monthly payment vs Debt to income ratio') + xlab('Term wise monthly loan payment')
+
+```
+
+This is also true to logic. The more debt you have , the more amount you pay back monthly, for a given term - clear from the increasing medians. (Faceting for term because , overall debt vs montly loan payment would be similar with different economic classes.)
+
+```{r , echo = FALSE , eval = FALSE}
+debt.temp <- subset(debt , term == 12)
+
+#debt.temp <- debt
+
+unique(debt.temp$debt.bin)
+
+bin <- function(x)
+{
+  y = NA
+  if(x == '(0,0.1]')
+    y = 1
+  if(x == '(0.1,0.2]')
+    y = 2
+  if(x == '(0.2,0.3]')
+    y = 3
+  if(x == '(0.3,0.4]')
+    y = 4
+  if(x == '(0.4,0.5]')
+    y = 5
+  return(y)
+}
+
+debt.temp$debt.value <- lapply(debt.temp$debt.bin,bin)
+
+debt.temp$debt.value <- as.numeric(debt.temp$debt.value)
+
+debt.temp <- subset(debt.temp , monthly.loan.payment > quantile(debt.temp$monthly.loan.payment , 0.05 , na.rm = TRUE) & monthly.loan.payment < quantile(debt.temp$monthly.loan.payment , 0.95 , na.rm = TRUE))
+
+cor.test(debt.temp$debt.value , debt.temp$monthly.loan.payment )
+
+lmfit <- lm(monthly.loan.payment ~ debt.to.income.ratio , debt.temp)
+
+summary(lmfit)
+
+rm(debt.temp,  lmfit , bin)
+```
+
+This indicates a correlation of __0.19__ , which is not very strong. Also , I tried to find the $r^{2}$ value term wise and the maximum value was __0.03671__. 
+
+#### 4.Credit Score plots
+
+##### 4.1.How does credit score affect borrower rate
+```{r  , echo = FALSE}
+
+ggplot(data = subset(normalized.data , !is.na(credit.bins)) , aes(x = credit.bins , y = borrower.rate)) + geom_boxplot() + ggtitle('Credit bins vs Borrower Rate') + ggtitle('Average credit Score vs Borrower rate(bin wise)')
+
+rm(normalized.data)
+
+```
+
+This is also as expected. Prosper rating alpha takes into account credit score , thus lower credit scores (and hence poorer alpha scores) get higher interest.
+
+```{r , eval = FALSE , echo = FALSE}
+normalized.data <- subset(loan ,!is.na(credit.score.exp))
+
+normalized.data$listing.creation.date <- as.character(normalized.data$listing.creation.date)
+
+normalized.data$credit.bins <- cut(normalized.data$credit.score.exp , seq(609.5,760,15)) 
+
+normalized.data <- subset(normalized.data , !is.na(credit.bins))
+
+cor.test(normalized.data$credit.score.exp,normalized.data$borrower.rate)
+
+summary(normalized.data$credit.score.exp)
+
+lmfit <- lm(borrower.rate ~ credit.bins , normalized.data)
+
+summary(lmfit)
+
+rm(normalized.data , lmfit)
+```
+
+I removed higher credit scores from the data point temporarily - since higher scores ( > 774) looked to have similiar deals in rate. The data has a correlation score of __-0.35__ and $r^{2}$ is 0.1253. Although this has a strong correlation , this is a case where the statistics couldn't explain the patterns in the data , which was obvious in the plot!
+
+#### 5.Credit Lines
+##### 5.1 Distribution of credit lines by Prosper alpha score.
+```{r , echo = FALSE , warning = FALSE}
+
+credit.lines <- subset(loan , open.credit.lines > quantile(loan$open.credit.lines , 0.05 , na.rm = TRUE) & open.credit.lines < quantile (loan$open.credit.lines , 0.95 , na.rm = TRUE))
+
+
+#summary(credit.lines$open.credit.lines)
+
+credit.lines$credit.bins <- cut(credit.lines$open.credit.lines , seq(2,18,2))
+
+credit.lines$listing.creation.date <- as.character(credit.lines$listing.creation.date)
+
+credit.lines.group <- subset(credit.lines,!is.na(prosper.rating...alpha.)) %>%
+                          group_by(credit.bins , prosper.rating...alpha.) %>%
+                          summarise( n  = n() ) %>%
+                          ungroup(credit.bins)
+
+ggplot(data  = credit.lines.group , aes(x = credit.bins , y = n)) + geom_bar(aes(fill = prosper.rating...alpha.) , stat = 'identity') + xlab('Credit lines open') + ylab('Frequency') +
+  ggtitle('Frequency of credit lines open (WRT Alpha rating)') + scale_fill_brewer(palette = 'Set2')
+
+rm(credit.lines.group)
+```
+The rating also , looks to be independent on the amount of credit line one has - my guess was rating would decrease with increasing credit lines. But the credit lines themselves are normally distributed.
+
+##### 5.2 How does open credit lines affect borrower rate?
+```{r , echo = FALSE}
+
+ggplot(data = credit.lines , aes(x = credit.bins , y = borrower.rate)) + geom_boxplot() +
+  ggtitle('Borrower rate vs Credit lines open') + xlab('Credit lines open')
+
+
+```
+
+This one was pretty suprising to me. I expected if a borrower had more credit lines , he risk of defaulting would be re-assessed and rate would be increased. But this was not true. I found out this was because people with higher credit lines are usually one who are doing well for themselves(higher salary , homeowner , verifiable source of income etc.) I don't expect any sort of correlation between the two.
+
+##### 5.3 Borrower rate vs Total / Open Credit lines
+```{r , echo = FALSE , warning = FALSE , fig.width = 10 , fig.height = 8}
+
+credit.lines$credit.line.ratio <- (credit.lines$current.credit.lines / credit.lines$open.credit.lines)
+credit.lines <- subset(credit.lines , credit.line.ratio > quantile(credit.lines$credit.line.ratio , 0.05 , na.rm = TRUE) & credit.line.ratio < quantile(credit.lines$credit.line.ratio , 0.95 , na.rm = TRUE))
+#summary(credit.lines$credit.line.ratio)
+credit.lines$credit.line.ratio.bin <- cut(credit.lines$credit.line.ratio , seq(1.059 , 1.50 ,0.05))
+
+ggplot(data = subset(credit.lines,!is.na(credit.line.ratio.bin)) , aes(x = credit.line.ratio.bin , y = borrower.rate)) + geom_boxplot(aes(fill = prosper.rating...alpha.)) +
+  xlab('Total/Open Credit lines') + ggtitle('Total/Open credit lines vs borrower rate')
+rm(credit.lines)
+
+```
+
+Like my previous observations , regardless of credit lines open , one of the key determining factor for borrower rate turns out to be Prosper alpha score. Even if some credit lines are not currently open (Not paid for / borrowed from) , it doesn't not seem to affect the borrower rate.
+
+My guess was higher values of total/open credit lines would have meant more delinquency / default rate , therefore , would be assigned poorer prosper score. But this is not given much consideration.
+
+##### 5.4 Open credit lines vs Delinquencies
+```{r  , echo = FALSE , warning = FALSE}
+
+ggplot(data = loan , aes(x = open.credit.lines , y = current.delinquencies)) + 
+  geom_jitter(position = position_jitter(h = 0) , alpha = 0.09) + 
+  ylim(0,42) 
+
+```
+
+Then I decided to look into the delinquencies one might have had due to the number of credit lines open.
+I expected that if one had more credit lines open , he is more likely to fall short of completing monthly payments. However , this was also not true. This I found out is because credit lines are given to buyer based on their credit scores (assessed on various paramaters by prosper) - hence, the % of default in every category is equally likely. 
+More insights [here](http://p2plendingexpert.com/credit-analysis-number-of-open-trade-lines/)
+
+
+```{r , echo = FALSE , eval = FALSE}
+cor.test(loan$open.credit.lines , loan$current.delinquencies)
+
+lmfit <- lm(current.delinquencies ~ open.credit.lines , loan)
+
+summary(lmfit)
+
+rm(lmfit)
+```
+
+Pearson's r is : __-0.16__ and $r^{2}$ is 0.02621 , which only proves empirically what I had guessed above.
+
+
+#### 6. Inquiries made
+##### 6.1 Inquiries made frequency (by alpha score)
+```{r , echo = FALSE , fig.width = 10 , fig.height = 8}
+inquiries <- subset(loan , total.inquiries > quantile(loan$total.inquiries , 0.05 , na.rm = TRUE) & total.inquiries <quantile(loan$total.inquiries,0.95,na.rm = TRUE))
+
+inquiries$inquiries.bin <- cut(inquiries$total.inquiries , seq(1,15,1))
+inquiries$listing.creation.date <- as.character(inquiries$listing.creation.date)
+inquiries.groups <- inquiries %>%
+                    group_by(inquiries.bin , prosper.rating...alpha.) %>%
+                    summarise(n = n()) %>%
+                    ungroup(inquiries.bin)
+
+inquiries.groups <- subset(inquiries.groups , !is.na(inquiries.groups$prosper.rating...alpha.))
+
+ggplot(data = inquiries.groups , aes(x  = inquiries.bin , y = n)) + geom_bar(stat = 'identity' , aes(fill = prosper.rating...alpha.)) + xlab('inquiries made (Bin wise)') + ylab('Frequency') + 
+  ggtitle('Inquiries Frequency') + scale_fill_brewer(palette = 'Set2')
+
+```
+
+This was one of the more insightful plots. I found inquiries into credit score, is very important indicator on prosper score. An important matter to notice here is the ratio of better prosper alpha scores decreasing and worse prosper alpha scores increasing with increase in number of inquiries.
+This actually makes sense. If a person is desperate for a loan , he will use multiple sources , each of which will look into credit score, and prompt a inquiry. 
+More of this subject [here](https://www.google.co.in/webhp?sourceid=chrome-instant&ion=1&espv=2&ie=UTF-8#q=why+open+inquiries+lending+club).
+Also, for loans with no previous inquiry(first loan attempt ever) - the number of 'AA' rating is maximum - which only reinforces my hunch. (Refer - the NA bin!)
+
+##### 6.2 Inquiries made.
+```{r , echo = FALSE, fig.height = 8 , fig.width = 10}
+
+ggplot(data = subset(inquiries , !is.na(prosper.rating...alpha.)) , aes(x = inquiries.bin)) + geom_bar(aes(fill = prosper.rating...alpha.) , stat = 'count')
+
+```
+
+This clearly show the decreasing number of AA (better) rated loans with increasing number of inquiries. Also , the NA bin represents '0' inquiries made previously , and we can see the maximum ratio of the better prosper score to the total prosper scores.
+
+##### 6.3 Inquiries made for HR loans.
+```{r , echo = FALSE , fig.height = 8 , fig.width = 10}
+
+inquiries.groups.hr <- subset(inquiries.groups , prosper.rating...alpha. == 'HR')
+
+inquiries$listing.creation.date <- as.character(inquiries$listing.creation.date)
+
+inquiries.temp <-  inquiries %>%
+                    group_by(inquiries.bin) %>%
+                    summarise(n = n()) 
+
+inquiries.groups.hr$n <- inquiries.groups.hr$n/inquiries.temp$n
+
+ggplot(data = subset(inquiries.groups.hr, !is.na(inquiries.bin)) , aes(x = inquiries.bin , y = (n * 100))) + geom_bar(stat = 'identity') +
+  ggtitle('% of inquiries made for HR rated loans') + 
+  xlab('Inquiries(bin wise)') + ylab('% of loans which have inquiries')  
+
+rm(inquiries.groups , inquiries.groups.hr)
+
+```
+
+Shows the increasing % of HR rated loans to the total number of loans with increase in inquiries.
+
+```{r , echo = FALSE , eval = FALSE}
+
+cor.test(inquiries$prosper.rating..numeric. , inquiries$total.inquiries)
+
+lmfit <- lm(prosper.rating..numeric. ~ total.inquiries , inquiries)
+
+summary(lmfit)
+
+rm(lmfit)
+```
+
+Inquiries is a pretty good factor in determining prosper alpha rating - correlation of -0.16 (More number of inquiries --> Poorer alpha score) and $r^{2}$ value of 0.02853.
+
+#### 6.4 % of chargedoff loans with inquiries.
+```{r , echo = FALSE}
+
+
+inquiries.defaulted <- subset(inquiries,  status  == 'Chargedoff')
+
+inquiries.defaulted.groups <- inquiries.defaulted %>%
+                              group_by(inquiries.bin) %>%
+                              summarise(n = n()) 
+
+inquiries.defaulted.groups$n <-  (inquiries.defaulted.groups$n / inquiries.temp$n)  * 100
+
+ggplot(data = subset(inquiries.defaulted.groups , !is.na(inquiries.bin)) , aes(x  = inquiries.bin  , y = n)) +
+  geom_bar(stat = 'identity' ,aes(fill = I('darkslategrey'))) + xlab('Inquiries made(bin wise)') +
+  ggtitle('Chargeoff Frequency')
+
+```
+
+The % of defaulting loans , also increases with increase in number of inquiries. (As it is evident from the plot)
+
+```{r , echo = FALSE}
+
+rm(inquiries , inquiries.defaulted, inquiries.defaulted.groups , inquiries.temp )
+
+```
+
+##### 6.5 Inquiries made vs borrower rate (Bin wise)
+```{r , echo = FALSE }
+
+inquiries <- subset(loan , total.inquiries > quantile(loan$total.inquiries , 0.05 , na.rm = TRUE) & total.inquiries < quantile(loan$total.inquiries,0.95,na.rm = TRUE))
+
+inquiries$inquiries.bin <- cut(inquiries$total.inquiries , seq(1,15,1))
+
+ggplot(data = subset(inquiries , !is.na(inquiries.bin)) , aes(x = inquiries.bin , y  = borrower.rate)) + geom_boxplot() + xlab('Inquiries made') + ylab('Borrower rate') + 
+  ggtitle('Borrower rate by inquiries made')
+
+#summary(inquiries$total.inquiries)
+
+rm(inquiries)
+```
+
+Borrower rates increases steadily albiet by very little for increase in number of inquiries.
+
+```{r , echo = FALSE , eval = FALSE}
+inquiries <- subset(loan , total.inquiries > quantile(loan$total.inquiries , 0.05 , na.rm = TRUE) & total.inquiries < quantile(loan$total.inquiries,0.95,na.rm = TRUE))
+
+cor.test(inquiries$total.inquiries , inquiries$borrower.rate)
+
+lmfit <- lm(borrower.rate ~ total.inquiries , inquiries)
+
+summary(lmfit)
+
+rm(lmfit , inquiries)
+
+```
+
+Inquiries has a _r_ value of 0.141 , and $r^{2}$ value of 0.02009.
+
+#### 7. Estimated loss by Prosper alpha scores
+```{r , echo = FALSE , warning = FALSE}
+
+ggplot(data = subset(loan ,!is.na(prosper.rating...alpha.)) , aes(x = prosper.rating...alpha. , y = estimated.loss)) + geom_boxplot() + 
+  xlab('Prosper alpha rating') + ggtitle('Alpha rating vs estimated loss')
+  
+```
+
+% of money lost by reinvesting in similiar type of loan over a period of one year. Clearly low-risk loans have smaller loses than high-risk loans.
+
+```{r , echo = FALSE , eval = FALSE}
+
+cor.test(loan$prosper.rating..numeric.,loan$estimated.loss)
+
+lmfit <- lm(estimated.loss ~ prosper.rating..numeric. , loan)
+
+summary(lmfit)
+
+rm(lmfit)
+```
+
+This also has a correlation co-efficient of __0.96__ (+ve , _exact opposite_ of effective yield vs alpha scores too). $r^{2}$ value is 0.9296. This is extremely high.
+
+#### 8. Monthly loan payments vs Current Credit Lines
+```{r , echo = FALSE , eval = FALSE}
+ggplot(data = loan , aes(x = current.credit.lines , y = monthly.loan.payment)) + 
+  geom_jitter(alpha = 0.02 , position = position_jitter(h = 0)) + geom_smooth() +
+  ggtitle('Monthly loan payments vs Current credit lines')
+
+```
+
+As people have more credit lines , they pay more principal to prosper , as expected. Because of more bank card utilization!
+
+```{r , echo = FALSE , eval = FALSE}
+
+loan.temp <- subset(loan , current.credit.lines > quantile(loan$current.credit.lines , 0.05 , na.rm = TRUE) &
+                     current.credit.lines < quantile(loan$current.credit.lines , 0.95 , na.rm = TRUE))
+
+cor.test(loan.temp$current.credit.lines , loan.temp$monthly.loan.payment)
+
+lmfit <- lm(monthly.loan.payment ~ current.credit.lines, loan)
+
+summary(lmfit)
+
+rm(lmfit , loan.temp)
+```
+
+Correlation score indicates a positive correlation of __0.18__ while $r^{2}$ value is 0.03493 , which is very low - meaning current credit lines don't explain the monthly loan payment very well.
+
+#### 9. Bank card utilization.
+```{r , echo = FALSE}
+
+ggplot(data = subset(debt , !is.na(prosper.rating...alpha.) & year > 2011) ,
+       aes(x = prosper.rating...alpha. , y = bankcard.utilization)) +
+          geom_boxplot(aes(fill = income.verifiable)) +
+  xlab('Prosper alpha rating') + ggtitle('Bankcard utilization by alpha scores')
+#summary(debt$bankcard.utilization)
+
+```
+
+Bank card utilization is the ratio of : amount pending before current cycle / Total credit available.
+It is clear from this plot , Lower risk loans have lower bank card utilization loans. It is helped by the fact that , they are less likely to delinquent and also have more credit lines on average(as discussed above).
+
+Also a small portion of HR rated loans looked to have better bank card utilization rates than D and E rated loans - and on analysing 'income verifiable' parameter , it was clear there were fewer people with verified income in D and E category. 
+
+```{r , echo = FALSE ,eval = FALSE}
+
+cor.test(loan$prosper.rating..numeric.,loan$bankcard.utilization)
+
+lmfit <- lm(bankcard.utilization ~ prosper.rating..numeric. , loan)
+
+summary(lmfit)
+
+rm(lmfit)
+```
+
+This has a pretty good _r_ value of 0.26 while $r^{2}$ value is very low 0.07033.
+
+
+#### 10.Defaulting rate vs Income
+```{r , echo = FALSE , fig.height = 8 , fig.width = 10}
+
+debt$listing.creation.date <- as.numeric(debt$listing.creation.date)
+
+income.groups <- debt %>%
+                  group_by(stated.monthly.income , status) %>%
+                  summarise(n = n()) %>%
+                  ungroup(stated.monthly.income)
+
+income.groups <- subset(income.groups , status == 'Chargedoff')
+
+income.groups.total <- debt %>%
+                       group_by(stated.monthly.income) %>%
+                       summarise( n = n())
+denom <- function(x)
+{
+  y = NA
+  y = income.groups.total[which(income.groups$stated.monthly.income == x),2]
+  return(y)
+}
+
+income.groups$total <- lapply(income.groups$stated.monthly.income , denom)
+
+income.groups$total <- lapply(income.groups$total , function(x) as.numeric(x[1]))
+  
+rm(denom)
+
+income.groups$n <- as.numeric(income.groups$n)
+
+income.groups$total <- as.numeric(income.groups$total)
+
+income.groups$ratio <- income.groups$n / income.groups$total
+
+rm(income.groups.total)
+  
+income.groups$income.bin <- cut(income.groups$stated.monthly.income , seq(0,703250,4000))
+
+income.groups.plot <- income.groups %>%
+                      group_by(income.bin) %>%
+                      summarise( mean_ratio = mean(ratio)) %>%
+                      ungroup(income.bin)
+
+income.groups.plot <- income.groups.plot[-c(12),]
+
+ggplot(data = subset(income.groups.plot , !is.na(income.bin)), aes(x = income.bin , y = (mean_ratio * 10))) + geom_bar(stat = 'identity' , aes(fill = 'mediumpurple3')) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  xlab('Income (bin wise)') + ylab('Mean chargeoff %') +
+  ggtitle('Defaulting rate vs Income groups')
+
+rm(income.groups)
+
+convert <- function(x)
+{
+  y = NA
+  y = which(income.groups.plot$income.bin == x)
+  return(as.numeric(y))
+}
+
+income.groups.plot$new_n <- lapply(income.groups.plot$income.bin,convert)
+
+income.groups.plot <- subset(income.groups.plot , !is.na(income.bin))
+
+income.groups.plot$new_n <- as.numeric(income.groups.plot$new_n)
+
+#cor.test(income.groups.plot$new_n , income.groups.plot$mean_ratio)
+
+#lmfit <- lm(mean_ratio ~ new_n , income.groups.plot)
+
+#summary(lmfit)
+         
+rm(income.groups.plot , convert )
+
+
+#summary(income.groups$stated.monthly.income)            
+```
+
+From this plot , it is clear people with poorer income default more on average than people with higher income. I think I'll look into this more in multi-variate plot adding Montly loan payment as a third parameter.
+
+For defaulting loans , This has a strong correlation of __-0.944__ and $r^{2}$ value is __0.8811__.
+
+#### 11. Income range vs is.borrower.homeowner.
+```{r , echo = FALSE , fig.width = 10 , fig.height = 8}
+
+ggplot(data = debt , aes(x = income.range )) + geom_bar(stat = 'count'  ,aes(fill = is.borrower.homeowner)) + scale_fill_brewer(type = 'qual') + 
+  xlab('Income range') + 
+  ylab('Frequency') +
+  ggtitle('Income range frequencies') + guides(colour = guide_legend(reverse=T))
+
+```
+
+People with higher income are more likely to be homeowners. This is as expected. This is the reason this is used as axiom in determining prosper alpha score.
+
+```{r , echo = FALSE}
+
+ggplot(data = debt , aes(x  = debt.to.income.ratio)) + geom_histogram(aes(fill = is.borrower.homeowner)) + ggtitle('Debt to income ratio - Homeowners')
+```
+
+After that , I wanted to see if loans with high debt to income ratio , have home ownership. But suprisingly , % of home ownership was proportional throughout various debt to income ratios.
+
+```{r , echo = FALSE ,eval = FALSE}
+debt.temp <- debt
+
+debt.temp$home <- ifelse(debt$is.borrower.homeowner == 'True' ,  as.numeric(1) , as.numeric(0))
+
+cor.test(debt.temp$stated.monthly.income , debt.temp$home)
+
+lmfit <- lm(home ~ stated.monthly.income , debt.temp)
+
+summary(lmfit)
+
+rm(lmfit,debt.temp)
+```
+
+Between Income vs Homeownership , the correlation is __0.2584__ which is pretty strong and $r^{2}$ value is __0.06678__. This would mean other the variance cannot be solely explained by debt to income ratio but other factors (Such as income range,  credit lines open ) need to be considered.
+
+#### 12. Debt to income ratio vs Prosper alpha scores.
+```{r , echo = FALSE}
+ggplot(data = subset(debt , !is.na(prosper.rating...alpha.)) , aes(x = debt.to.income.ratio)) + geom_histogram(aes(fill  = prosper.rating...alpha.)) + ggtitle('Debt to income ratio vs Prosper alpha scores')
+```
+
+However, people with high debt to income ratio are less likely to get good alpha score than. 
+
+#### 13. Homeownership by Debt to income ratio.
+```{r , echo = FALSE}
+
+ggplot(data = debt , aes(x = debt.to.income.ratio)) + geom_histogram(aes(fill = is.borrower.homeowner))
+
+```
+There are no strong tends here. All the bins have a good proportion of homeowners ,indicating , higher debt to income ratio might have been from people who have a good source of income , but might have borrower more!
+
+#### 14. Public record :
+
+```{r , echo = FALSE}
+  
+public.record <- loan
+
+public.record$public.record.bin <- cut(public.record$public.records.last12.months , seq(0,20,1))
+
+#public.record <- subset(public.record , !is.na(public.record.bin))
+
+ggplot(data = public.record , aes(x = public.record.bin , y = borrower.rate)) + 
+  geom_boxplot()
+```
+
+From this plot , I observe , loans with public record have on average 4 - 5 %   borrower rate higher than loans with no public record. However, as the number of public record increase , this borrower rate remains unaffected.
+
+```{r ,echo = FALSE}
+
+public.record.group <- public.record %>%
+                       group_by(public.record.bin , prosper.rating...alpha.) %>%
+                       summarise(n = n()) %>%
+                       ungroup(public.record.bin)
+
+public.record.group.total <- public.record %>%
+                       group_by(public.record.bin) %>%
+                       summarise(n = n())
+
+value <- function(x)
+{
+  y = NA
+  y = public.record.group.total[which(public.record.group.total$public.record.bin == x),]
+  return(y[2])
+}
+
+public.record.group$new_n <- lapply(public.record.group$public.record.bin , value)
+
+public.record.group$new_n <- lapply(public.record.group$new_n , function(x) as.numeric(x[1]))
+
+public.record.group$new_n <- as.numeric(public.record.group$new_n)
+
+public.record.group$n <- as.numeric(public.record.group$n)
+
+public.record.group$ratio <- (public.record.group$n / public.record.group$new_n)
+
+rm(value)
+
+ggplot(data = subset(public.record.group,prosper.rating...alpha. == 'D') , aes(x = public.record.bin , y = ratio)) +  geom_bar(stat = 'identity')
+
+row <- function(x)
+{
+  y = NA
+  y = public.record.groups[which(public.record.groups == x),]
+  return(y[0])
+}
+  
+rm(public.record.group , public.record.group.total , row)
+```
+
+This is the proportion of 'D'  rated loans for a given public record(bin). I notice as a general trend , poorer rated loans increase in % with increase in public record (Chances of defaulting is more).
+
+```{r , echo = FALSE , eval = FALSE}
+
+public.record.group.total <- public.record %>%
+                              group_by(public.record.bin) %>%
+                              summarise(median = median(borrower.rate))
+value <- function(x)
+{
+  y = NA
+  y  = which(public.record.group.total$public.record.bin == x)
+  return(y)
+}
+
+public.record.group.total$new_n <- lapply(public.record.group.total$public.record.bin , value)
+
+public.record.group.total$new_n <- as.numeric(public.record.group.total$new_n)
+
+public.record.group.total <- subset(public.record.group.total , !is.na(public.record.bin))
+
+cor.test(public.record.group.total$new_n , public.record.group.total$median)
+
+lmfit <- lm(median ~ public.record.group.total$new_n , public.record.group.total)
+
+summary(lmfit)
+
+rm(lmfit , value , public.record.group.total)
+```
+
+This has a _r-value_ of -0.48 and $r^{2}$ value of 0.06145. This is because even though loans without public record have median rate of 18% for borrowing , loans with public records have 22%-24% rate , which is not much of a increase even for much larger increase in number of public records.
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+These were the strong trends I saw :
+
+1. Borrowing rate increase steadily with drop in credit score. [Infact , for every 15 drop in average credit score,  there is a noticeable drop is borrower rate. (Correlation of -0.35 as well!).](#credit-score-plots)
+
+2. It is possible to credit to some extent if a person might delinquent , [depending on the increasing number of credit lines open. (r = -0.16 , this value however , significantly pulled down by people having lower credit lines open - who make the majority).](#open-credit-lines-vs-delinquencies)
+
+3. Inquiries made by a borrower is one important factor in determining the health of the loan.[ It is also one of the most important factor in determining prosper alpha score (a desperate borrower has more inquiries). Also, one can expect borrowing rate to steadily increase with increase in inquiries , and the loan is also expected to default more often.](#inquiries-made)
+
+4. Taking into consideration only defaulting loans , one of the key indicators of if a loan is more likely to default is to check the borrower monthly income. Plotting this bin-wise - and segrgating only defaulting loans , yeilded a correlation score for -0.944 , [i.e users with higher income are likely to default less and vice versa](#defaulting-rate-vs-income)
+
+5. [Debt to income ratio , to some extent could tell if a borrower might / might not be a homeowner.](#income-range-vs-is.borrower.homeowner.) [However, the variance in the data is not entirely explained by this. Other key factors for determining the alpha scores should also be considered.](#debt-to-income-ratio-vs-prosper-alpha-scores.)
+
+6. [For a loan having a public record ( bankruptcy etc..) , it is very likely to get higher rate of interst than those which do not - correlation of __-0.48__. However , any increase in number of such public record have little effects.](#public-record)
+
+
+However , some of the plots were pretty suprising in their revelation : 
+
+1. I expected Borrower rate to increase with credit lines open , however , [this was not the case at all. Infact, borrower rate looks to be almost independent of credit lines open.](#how-does-open-credit-lines-affect-borrower-rate)
+
+2. Also , [homeowner-ship is not exactly determined by debt-to-income ratio as I found out here.](#homeownership-by-debt-to-income-ratio.)
+
+### What was the strongest relationship you found?
+
+Estimated loss by Prosper alpha score and estimated yield by alpha score both have -0.96 and 0.96 correlation co-efficient respectively.
+
+Also , given a monthly income , it is easier to say how many % of such loans might default , based on a -0.94 correlation coefficient.
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+
+
+# Multi-variate
+
+#### Defaulted vs Completed trends :
+##### Monthly loan payment vs Stated monthly income by status!
+```{r , echo = FALSE , fig.height= 8 , fig.width = 10}
+income.groups <- debt %>%
+                 group_by(stated.monthly.income,monthly.loan.payment,status) %>%
+                 summarise(n = n()) %>%
+                ungroup(monthly.loan.payment,stated.monthly.income)
+
+income.groups$status <- ifelse(income.groups$status == 'Defauled' | income.groups$status == 'Chargedoff' , 'Chargedoff'  , income.groups$status)
+
+income.groups <- subset(income.groups , status %in% c('Chargedoff' , 'Completed'))
+
+ggplot(data = income.groups , aes(x = stated.monthly.income , y = monthly.loan.payment )) +
+  geom_point(aes(color = status , size = n)) + geom_smooth() +
+  xlab('Stated monthly income') + 
+  ylab('Monthly loan payment') +
+  ggtitle('Monthly payment vs Stated monthly income')
+
+rm(income.groups)
+```
+
+From this plot of stated monthly income vs monthly loan payment , I could see most of the defaulters have low monthly income but have to make large monthly payments. Also, people with high monthly income seem to have hardly defaulted. Except for the outliers. (From the clustering of red dots near bottom left corner!)
+
+##### Monthly loan payment vs Stated monthly Income by Prosper rating alpha
+```{r , echo = FALSE, fig.height= 8 , fig.width = 10}
+income.groups <- debt %>%
+                 group_by(stated.monthly.income,monthly.loan.payment,prosper.rating...alpha.,status) %>%
+                 summarise(n = n()) %>%
+                ungroup(prosper.rating...alpha.,monthly.loan.payment,stated.monthly.income)
+
+income.groups$status <- ifelse(income.groups$status == 'Defauled' | income.groups$status == 'Chargedoff' , 'Chargedoff'  , income.groups$status)
+
+income.groups <- subset(income.groups , status %in% c('Chargedoff' , 'Completed') & !is.na(prosper.rating...alpha.))
+
+ggplot(data = income.groups , aes(x = stated.monthly.income, y = monthly.loan.payment)) +
+  geom_point(aes(color = prosper.rating...alpha. , size = n)) + facet_wrap(~status , scales = 'free') + geom_smooth() +
+  xlab('Stated monthly income') +
+  ylab('Monthly loan Payment')
+
+rm(income.groups)
+```
+
+This proved what I already knew , people with higher monthly income and lower monthly loan payments are most in AA category(completed) while most of the low stated monthly income - high monthly payment loans are in HR category (both completed and defaulted).
+
+##### Monthly loan payment vs Stated monthly income by Income range (bin-wise) :
+```{r , echo = FALSE, fig.height= 8 , fig.width = 10}
+income.groups <- debt %>%
+                 group_by(stated.monthly.income,monthly.loan.payment,income.range,status) %>%
+                 summarise(n = n()) %>%
+                ungroup(income.range,monthly.loan.payment,stated.monthly.income)
+
+income.groups$status <- ifelse(income.groups$status == 'Defauled' | income.groups$status == 'Chargedoff' , 'Chargedoff'  , income.groups$status)
+
+income.groups <- subset(income.groups , status %in% c('Chargedoff' , 'Completed') & !is.na(income.range))
+
+ggplot(data = income.groups , aes(x = stated.monthly.income, y = monthly.loan.payment)) +
+  geom_point(aes(color = income.range , size = n)) + facet_wrap(~status , scales = 'free') + geom_smooth() + xlab('Stated monthly income') +
+  ylab('Monthly loan Payment') +
+  geom_hline(yintercept = 450)
+
+rm(income.groups)
+```
+
+For plot with income ranges , it is clear from the smoothening line/curve that - defaulted loans on average borrow more (by very much) than completed loans. Monthly loan payment of 400 and below for most loans looks to have completed the loan , while > 600 mostly produces Chargedoff (exceptions are income ranges of $75,000 and above because of higher income). Also another important insight here is the increasing slope of the smoothening curve for chargedoff loan , indicating more monthly loan payment(Hence more chargedoff loans!).
+
+##### Monthly loan payment vs Stated monthly income by 'Income verifiable' :
+```{r , echo = FALSE, fig.height= 8 , fig.width = 10}
+income.groups <- debt %>%
+              group_by(stated.monthly.income,monthly.loan.payment,income.verifiable,status) %>%
+                 summarise(n = n()) %>%
+                ungroup(income.verifiable,monthly.loan.payment,stated.monthly.income)
+
+income.groups$status <- ifelse(income.groups$status == 'Defauled' | income.groups$status == 'Chargedoff' , 'Chargedoff'  , income.groups$status)
+
+income.groups <- subset(income.groups , status %in% c('Chargedoff' , 'Completed') & !is.na(income.verifiable))
+
+ggplot(data = income.groups , aes(x = stated.monthly.income, y = monthly.loan.payment)) +
+  geom_point(aes(color = income.verifiable , size = n)) + facet_wrap(~status , scales = 'free') + geom_smooth() + xlab('Stated monthly income') + ylab('Monthly loan payment') +
+  ggtitle('Loan status by Income verifiable')
+
+rm(income.groups)
+```
+
+Suprisingly income verifiable was not a major factor in deciding Chargeoff or completion - considering this was a major factor in deciding alpha score. Stated monthly income vs Monthly loan payment itself looks like a major deciding factor. Stil one of the major factor towards defaulting looks to be amount borrower / amount to be paid back every month and the borrower's monthly income.
+
+##### Monthly loan payment vs Stated Monthly income by Rate(bin-wise) :
+```{r , echo = FALSE, fig.height= 8 , fig.width = 10}
+income.groups <- debt %>%
+                 group_by(stated.monthly.income,monthly.loan.payment,year,rate.bin,status) %>%
+                 summarise(n = n()) %>%
+                ungroup(rate.bin,year,monthly.loan.payment,stated.monthly.income)
+
+income.groups$status <- ifelse(income.groups$status == 'Defauled' | income.groups$status == 'Chargedoff' , 'Chargedoff'  , income.groups$status)
+
+income.groups <- subset(income.groups , status %in% c('Chargedoff' , 'Completed') & !is.na(rate.bin))
+
+ggplot(data = subset(income.groups , year > 2009 & year < 2014) , aes(x = stated.monthly.income, y = monthly.loan.payment)) +
+  geom_point(aes(color = rate.bin , size = n)) + facet_wrap(~status , scales = 'free') + geom_smooth() +
+  xlab('Stated monthly income') + ylab('Monthly loan payment') + 
+  ggtitle('Loan status by Rate(bin-wise)')
+
+rm(income.groups)
+```
+
+Most of the completed loans have 10%-20% borrewe rate , while most of the chargedoff loans have 30-40% borrower rate - even for low stated-monthly income and low-monthly payment! (Bottom left corner!)
+
+##### Monthly loan payment vs Stated Monthly income by Term :
+```{r , echo = FALSE, fig.height= 8 , fig.width = 10}
+#monthly loan payment rate --> 
+  
+monthly.payment <- debt %>%
+                   group_by(stated.monthly.income , monthly.loan.payment ,  term , status ) %>%
+                   summarise( n = n()) %>%
+                   ungroup(term , monthly.loan.payment , stated.monthly.income)
+
+monthly.payment$status <- ifelse(monthly.payment$status == 'Defauled' | monthly.payment$status == 'Chargedoff' , 'Chargedoff'  , monthly.payment$status)
+
+monthly.payment <- subset(monthly.payment , status %in% c('Chargedoff' , 'Completed'))  
+
+#unique(debt$term)
+
+ggplot(data = monthly.payment , aes(x = stated.monthly.income , y = monthly.loan.payment)) + 
+  geom_point(aes(color = cut(term , c(0,12,36,60)) , size = n )) + facet_wrap(~status , scales = 'free')+
+  xlab('Stated monthly income') + ylab('Monthly loan payment') + 
+  ggtitle('Loan status - by term!')
+
+rm(monthly.payment)
+```
+
+Here I see one important trend, for people paying a major part of their monthly income back , those who have 12 months term and able to complete the loan but a majority of those who have > 12 months , look to have defaulted. I suppose in the long term , it is difficult to live on a small part of income.
+
+#### Loan status by borrower-APR :
+##### Borrower A.P.R vs Monthly loan payment by count :
+```{r , echo = FALSE ,fig.height= 8 , fig.width = 10}
+monthly.rate <- debt %>%
+               group_by(monthly.loan.payment , borrower.a.p.r , status) %>%
+               summarise( n = n() ) %>%
+               ungroup(borrower.a.p.r, monthly.loan.payment)
+
+monthly.rate$status <- ifelse(monthly.rate$status == 'Chargedoff' | monthly.rate$status == 'Defaulted' , 'Chargedoff' , monthly.rate$status)
+
+monthly.rate <- subset(monthly.rate , n < quantile(monthly.rate$n , 0.95 , na.rm = TRUE))
+
+monthly.rate <- subset(monthly.rate , status %in% c('Chargedoff' , 'Completed'))
+
+ggplot(data = monthly.rate , aes(x = monthly.loan.payment , y = borrower.a.p.r )) +
+  geom_jitter(aes(color = n ) , position = position_jitter(h = 0)) +
+  facet_wrap(~status , scales = 'free') + scale_color_gradient(low = 'red' , high = 'white') +
+  geom_hline(yintercept = 10) + geom_hline(yintercept = 40) +
+  xlab('Monthly loan payment') + ylab('Borrower APR') +
+  ggtitle('Loan status - by borrower APR')
+
+rm(monthly.rate)
+```
+
+Most of the defaulted loans have very little monthly loan payment (around 80 percentile having less than $600 of monthly loan payment). Also , borrower APR is between 10%-  40% , __therefore, small loans with high APR are more likely to default__. It is very possible people take smaller loans to satisfy their immediate need/want or this is all they could afford to. Either way , this is a big red flag.
+
+##### Borrower A.P.R vs Monthly loan payment by Debt to income ratio : 
+```{r , echo = FALSE , fig.height = 8 , fig.width = 10}
+monthly.rate <- debt %>%
+               group_by(monthly.loan.payment , borrower.a.p.r , debt.to.income.ratio ,  status) %>%
+               summarise( n = n() ) %>%
+               ungroup(debt.to.income.ratio ,borrower.a.p.r, monthly.loan.payment)
+
+monthly.rate$status <- ifelse(monthly.rate$status == 'Chargedoff' | monthly.rate$status == 'Defaulted' , 'Chargedoff' , monthly.rate$status)
+
+monthly.rate <- subset(monthly.rate , n < quantile(monthly.rate$n , 0.95 , na.rm = TRUE))
+
+monthly.rate <- subset(monthly.rate , status %in% c('Chargedoff' , 'Completed') )
+
+ggplot(data = monthly.rate , aes(x = monthly.loan.payment , y = borrower.a.p.r )) +
+  geom_jitter(aes(color = debt.to.income.ratio , size = n ) ) +
+  facet_wrap(~status , scales = 'free') + scale_color_gradient(low = 'black' , high = 'green') +
+  xlab('Monthly loan payment') + ylab('Borrower APR') +
+  ggtitle('Loan status - by Debt to income ratio!')
+
+rm(monthly.rate)
+
+```
+
+This plot was pretty insightful. For each monthly payments . both completed and chargedoff-ed loans have similiar borrower rate. The determining factor was however , debt to income ratio. Complted loans look to have more debt to income ratio in the range 0.1-0.2 , while the more greener ones(0.3-0.4) are in the defaulted loans.
+
+#### Days to finance loan : 
+```{r , echo = FALSE ,fig.height= 8 , fig.width = 10}
+
+loan.temp <- loan
+
+loan.temp$listing.date <- strptime(x = as.character(loan.temp$listing.creation.date) , 
+                                       format="%Y-%m-%d %H:%M:%S")
+
+loan.temp$listing.date <- format(as.Date(loan.temp$listing.date,format="%Y-%m-%d"), "%Y-%m-%d")
+
+loan.temp$funded.date <- strptime(x = as.character(loan.temp$loan.origination.date) , 
+                                       format="%Y-%m-%d %H:%M:%S")
+
+loan.temp$days.to.fund <- (as.Date(loan.temp$funded.date) - as.Date(loan.temp$listing.date))
+
+loan.temp$days.to.fund <- as.numeric(loan.temp$days.to.fund)
+
+loan.temp <- subset(loan.temp , days.to.fund < quantile(loan.temp$days.to.fund , 0.97 , na.rm = TRUE))
+
+ggplot(data = subset(loan.temp , year > 2009) , aes(x = days.to.fund)) + geom_bar(stat = 'count' , aes(fill = prosper.rating...alpha.)) + facet_wrap(~year , scales = 'free') +
+  xlab('Days to fund' ) + ggtitle('Day to finance a loan - by Alpha rating')
+
+#summary(loan.temp$days.to.fund)
+
+rm(public.record)
+
+temp.data <- subset(loan.temp , year > 2009 & year < 2014)
+
+temp.data$days.to.fund <- as.numeric(temp.data$days.to.fund)
+
+#by(temp.data$days.to.fund , temp.data$prosper.rating...alpha. , median)
+
+rm(temp.data)
+
+
+```
+
+On average, most loans are funded within 20 days of their listing. AA rated loans in most cases (after 2010) are funded within the first 10 days. Suprisingly median for AA rated loans is 10 days , while that of B,C rated loan is 7 days! I decided to see why - 
+ 
+```{r , echo = FALSE , fig.width = 10 , fig.height = 8}
+ggplot(data = subset(loan.temp , year > 2009) , aes(x = days.to.fund)) + geom_bar(stat = 'count' , aes(fill = cut(estimated.effective.yield ,c(0,10,20,30,40,50)))) + facet_wrap(~year , scales = 'free') +
+   guides(fill=guide_legend(title="estimated.effective.yield")) +
+  xlab('Day to fund') + ggtitle('Days to fund a loan - by estimated effective yield')
+
+```
+
+From the figure , one important revelation is that - loans which give 10%-30%  yields are sanctioned much faster than loans with <10% estimated effective yeild. This is understandable , since even lenders who look to 'diversify' their lending as discussed [here](#what-are-the-effective-yeilds-of-various-alpha-scores) , will want to maximise their profit. Also these are the loans with moderate amount of risks - hence they can take a gamble at these. Also notable is how high risk loans (30%-40% effective yield) take nearly 30 days to sanction (if at all they are sanctioned!).
+ 
+#### Homeowner determination :
+```{r , echo = FALSE ,fig.height= 8 , fig.width = 10}
+
+ggplot(data = debt , aes(x = stated.monthly.income , y = debt.to.income.ratio)) + 
+  geom_point(aes(color = is.borrower.homeowner)) + xlab('Stated monthly income') + 
+  ylab('Debt to income ratio') + ggtitle('Homeownership status by (Debt to income ratio vs Stated monthly income)')
+
+```
+
+People who have low stated monthly income and high debt to income ratio have no home ownership. This can be used as a key-factor in determining homeownership and hence , prosper score , since the trends are very strong here.
+
+#### Estimated effective yields for Alpha scores by year :
+```{r , echo = FALSE,fig.height= 8 , fig.width = 10}
+#borrower rate 
+#estimated effective yield
+
+loan.temp <- subset(loan.temp , !is.na(closed.date) & closed.date !='')
+
+loan.temp$closed.date <- strptime(x = as.character(loan.temp$closed.date) , 
+                                       format="%Y-%m-%d %H:%M:%S")
+
+loan.temp <- subset(loan.temp , year > 2008)
+
+loan.temp$closed.date <- format(as.Date(loan.temp$closed.date,format="%Y-%m-%d"), "%Y-%m-%d")
+
+loan.temp$closed.month <- format(as.Date(loan.temp$closed.date,format="%Y-%m-%d"), "%m")
+
+loan.temp$closed.date <- as.character(loan.temp$closed.date)
+
+loan.temp$days.to.fund <- as.character(loan.temp$days.to.fund)
+
+loan.temp$funded.date <- as.character(loan.temp$funded.date)
+
+loan.temp$listing.creation.date <- as.character(loan.temp$listing.creation.date)
+
+plot.final <- loan.temp %>%
+              group_by(prosper.rating...alpha. , year , closed.month) %>%
+              summarise(median = median(estimated.effective.yield)) %>%
+              ungroup(year,prosper.rating...alpha.)
+
+
+plot.final <- subset(plot.final ,! year %in% c('2007','2008'))
+
+
+ggplot(data = subset(plot.final , year < 2014) , aes(x = closed.month , y = median )) +  facet_wrap(~year , scales = 'free') +
+  geom_point(aes(color = prosper.rating...alpha.)) + geom_line(aes(group=prosper.rating...alpha.))
+
+rm(plot.final)
+```
+
+This is as I had observed earlier. Priort to 2011 , the prosper alpha score wasn't really indicative of the risk of a loan - the effective yeild looks to have no steady returns. However , after 2011 , the alpha score look to have corresponding 'levels' of effective yeilds -as observed in 2 variable plot.
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+
+I noticed a strong relation between : 
+1. [Monthly loan payment vs Stated Monthly income](#monthly-loan-payment-vs-stated-monthly-income-by-status)
+2. Monthly loan payment vs Stated monthly income and how they caused defaulting!
+3. Borrower APR vs Monthly loan payment to determine - loan status(completed or defaulted!)
+4. Borrower APR vs Monthly loan payment by Debt to income ratio - which was the most intuitive graph I feel!
+5. Days to finance by Prosper rating alpha.
+6. Monthly loan payment vs Stated-monthly-income to determine defaulting using borrower rate!
+7. Determining homeowner status using Monthly loan payment vs stated monthly income and debt-to-income ratio.
+
+### Were there any interesting or surprising interactions between features?
+
+Yes , there were couple of them.  From my two variable plots I concluded income verifiable is one of the major factos in determining prosper alpha score. Therefore I expected more defaulted to have income.verifiable set to False. However, the trend was just not observable in the graph.
+
+Also, borrower rates , I expected might have been significantly higher for defaulted loans - since - the prosper alpha scores of them might have been
+
+Higher prosper score I noticed, actually took longer to get financed - because of the fact that the reward is poor compared to B or C category loans!
+# Final Plots and Summary
+
+### Plot One
+```{r , echo = FALSE, fig.height= 8 , fig.width = 10}
+  
+  income.groups <- debt %>%
+                   group_by(stated.monthly.income,monthly.loan.payment,prosper.rating...alpha.,status) %>%
+                   summarise(n = n()) %>%
+                  ungroup(prosper.rating...alpha.,monthly.loan.payment,stated.monthly.income)
+
+income.groups$status <- ifelse(income.groups$status == 'Defauled' | income.groups$status == 'Chargedoff' , 'Chargedoff'  , income.groups$status)
+
+income.groups <- subset(income.groups , status %in% c('Chargedoff' , 'Completed') & !is.na(prosper.rating...alpha.))
+
+ggplot(data = income.groups , aes(x = stated.monthly.income, y = monthly.loan.payment)) +
+  geom_point(aes(color = prosper.rating...alpha. , size = n)) + facet_wrap(~status , scales = 'free') + geom_smooth() +
+  xlab('Stated monthly income') +
+  ylab('Monthly loan Payment') + 
+  ggtitle('Loan status by Prosper alpha score - by (Monthly loan payment vs Stated Monthly income')
+
+rm(income.groups)
+```
+
+This shows the importance of the Prosper 'alpha' scores. If I had to pick one parameter indicative of the health/risk of the loan - Prosper alpha scores would be it. Although before 2008 , the alpha scores (or numeric scores) didn't really matter all that much , after 2008 , especially after 2011 - prosper alpha rating looks to consitently provide good information about the risk of the loan (or lack thereof!).
+
+This plot shows how loans which have lower stated monthly income and higher loan payment are high risk ones(HR and E) - while , loans which have higher stated monthly income are usually low risk loans!
+
+### Plot Two
+```{r , echo = FALSE , fig.height = 8 , fig.width = 10}
+
+monthly.rate <- debt %>%
+               group_by(monthly.loan.payment , borrower.a.p.r , debt.to.income.ratio ,  status) %>%
+               summarise( n = n() ) %>%
+               ungroup(debt.to.income.ratio ,borrower.a.p.r, monthly.loan.payment)
+
+monthly.rate$status <- ifelse(monthly.rate$status == 'Chargedoff' | monthly.rate$status == 'Defaulted' , 'Chargedoff' , monthly.rate$status)
+
+monthly.rate <- subset(monthly.rate , n < quantile(monthly.rate$n , 0.95 , na.rm = TRUE))
+
+monthly.rate <- subset(monthly.rate , status %in% c('Chargedoff' , 'Completed') )
+
+ggplot(data = monthly.rate , aes(x = monthly.loan.payment , y = borrower.a.p.r )) +
+  geom_jitter(aes(color = debt.to.income.ratio , size = n ) ) +
+  facet_wrap(~status , scales = 'free') + scale_color_gradient(low = 'black' , high = 'green') +
+  ylab('Borrower A.P.R') + xlab('Monthly loan payment') + 
+  ggtitle('Loan status by Debt to income ratio - by (Monthly loan Payment vs Stated monthly income)')
+
+rm(monthly.rate)
+
+
+```
+
+From this plot , I think one can figure out if a loan can default or not - looking at the APR vs Monthly loan payment. Most of the high APR - vs Low Monthly loan payments looks to have defaulted - especially if they have high debt-to-income ratio. This is probably because , a major part of their income is consumed for repaying the debt amount!
+### Plot Three 
+```{r , echo = FALSE , fig.width = 12 , fig.height = 8 , warning= FALSE}
+
+amount.rate <- debt %>%
+               group_by(loan.original.amount , borrower.rate , year , credit.score.exp) %>%
+               summarise(n = n()) %>%
+               ungroup(year , borrower.rate , loan.original.amount)
+
+amount.rate <- subset(amount.rate , !is.na(amount.rate$credit.score.exp))
+
+amount.rate <- subset(amount.rate , credit.score.exp > quantile(amount.rate$credit.score.exp , 0.05 , na.rm = TRUE) & credit.score.exp < quantile(amount.rate$credit.score.exp , 0.95 , na.rm = TRUE))
+
+amount.rate <- subset(amount.rate , year < 2014)
+
+ggplot(data = amount.rate , aes(x = loan.original.amount , y = borrower.rate)) + 
+  geom_jitter(aes(color = credit.score.exp , size = n) , position = position_jitter(h = 0)) + facet_wrap(~year , scales = 'free_x') + scale_color_gradient(low = 'deeppink4', high = 'darkturquoise') + xlab('Loan original amount') + ylab('Borrower rate') + 
+ggtitle('Borrower rate vs Loan original amount by Average credit score')
+
+rm(amount.rate , loan.temp , quarter)
+```
+
+This is a plot of Borrower rate vs Loan original amount by credit score(average). I noticed that for people with lower credit score , the borrower rate is higher than people with better credit scores for the same amount borrowed. This difference is very apparent - for example , in the year 2008 , a credit score 700 would get a $5000 loan for < 10% interest ,but a person with average credit score of 600 would get the same loan for nearly 35% interest rate. However , the difference is much better normalized after 2011 , where the prosper alpha scores better represent the status of a loan than they did previously!
+
+I choose these three multi-variate plots because , they give a good amount of information about :
+
+1. Strength of Prosper alpha score.
+
+2. Insights on how a loan might default (or if they might) and 
+
+3. What one can expect from a loan - based on their credit score?
+
+* * * 
+
+# Reflection
+
+A major portion of EDA on Prosper data , I feel , was spent on understanding the variables and how they affected the data. Once I was done with this process, the next step was to understand how two(or more) variables are correlated or if they might be correlated. Sometimes these correlations were obvious - like the ones involving the 'alpha' scores - since they were indicative of a loan and their status ; Sometimes , I had to dig deeper - clean , categorize , bin and remove some data. There were also places where I found out interesting facts , places I would have  never bothered to look otherwise.
+
+Major challenge in this EDA was the size of the dataset - particularly,  **81 variables**. There is a huge possibility of each variable affecting every other variable in some way and it was important I discover the important ones and also the ones where the extent of this 'effect' is significant. Also , Understanding how the variables represent real world data - and how the system works was a important task - since without this 'domain' knowledge , I wouldn't have been able to compare and identify the important variables.
+
+I feel I have uncovered most of the important correlations possible - (but not all of them ofcourse!) - but most importantly ,  I feel I have explored good insights about the loans , borrowers and lenders and how they have faired over the years - using distributions. I've also I feel , removed neccessary data at the placed needed(temporarily) and cleaned accordingly to give suitable plots. 
+
+But this EDA can be improved in few ways :
+
+1. In Two-Variable plots , I unconvered few key relations between alpha scores and other variables (For ex. income verifiable , monthly loan payment etc..) , and some of them showed strong correlation as well. I planned to decide which loans to 'choose' (from a lender's perspective) even for given prosper alpha scores and I was mostly succesful at it. However , all I could do was One-on-One comparision between variables and I could not get a sense of how all the variables could influence a loan outcome together i.e  a linear model (Since this required a huge amount of RAM and I couldn't complete the process at all).
+
+2. I've selectively chosen plots and variables which I feel are imporant , after plotting all the variables and discarding the ones which was not of much interest. It is entirely possible I might have missed some key insights. But I feel I have done a pretty decent job here.
+* * *

@@ -1,0 +1,13 @@
+Sources : 
+
+Insight to start projects and EDA : https://discussions.udacity.com/t/transforming-y-axis/194299 (Udacity forums)
+
+How to read a loan : https://www.prosper.com/help/topics/how-to-read-a-loan-listing/
+
+More about prosper and its activities : https://en.wikipedia.org/wiki/Prosper_Marketplace
+
+Understanding how loans and risks with them work - Effective loss rate :  http://www.lendacademy.com/explaining-expected-default-rate-and-estimated-loss-rate/
+
+Number of Open trade lines : http://p2plendingexpert.com/credit-analysis-number-of-open-trade-lines/
+
+Lending club (similar to prosper) : http://www.lendingmemo.com/lending-club-vs-prosper-for-borrowers/
