@@ -1,0 +1,35 @@
+Changes :
+
+1. Added more comments for clarity for : 
+	1. Creating new variables
+	2. Manipulating data
+
+2. Changed code width out code better to accomodate margin-80. 
+
+3. Removed text showing next to plots
+
+4. Changed markdown global parameters (although there is block-wise local , echo = FALSE , they don't *technically* OVERRIDE global parameters - since they are one and the same).
+
+5. Removed most bi-variate plots from Uni-variate plots section. I've kept some(if the plots themselves are bi-variate) but the explanation is from Uni-variate aspect of it. i.e If I had used 'fill' parameter and have not explained the 'fill' aspect of it - I've kept the plots in Uni-variate section itself , since , the fill is only for me to get insights (and I haven't explained anything from the optional second parameter).
+
+6. Removed unneccessary duplicate plots.
+
+7. Changed plots fill and color scale to 'sequential' where neccessary (if the fill parameter has >6 values , even if sequential filling is applicable , I've ignored , because the difference is not as apparent. I've used this to explain variance in 'alpha' rating , however!)
+
+8. Added transparency in places neccessary.
+
+9. Changed 'stacked' to 'dodge' when explain variance within categories. Kept stacked for explaining parts to whole ratio!
+
+10. Changed few histogram to frequency polygon for easier interpretability.
+
+11. Avoided using new plot in 'final plots section!'
+
+12. Removed n parameter for final plots and decided to do Multi-variate plots with 3 parameters only. I had only kept 'n' parameter in the first place to show scale of effect(i.e see how the points have clustered favoring a particular observation , but I didn't really want to explore this aspect!)
+
+13. Added proper scales (in USD , in % etc. ) to final plots.
+
+
+Stuff to be done (Optional rubrics) : 
+
+1. Verify statistically if the point indeed are diff. --> perform ANOVA.
+2. Add future challenges. 
