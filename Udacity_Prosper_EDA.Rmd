@@ -391,7 +391,8 @@ ggplot(data = subset(loan ,
                      %in% c('NC','')) ,
        aes(x = status)) + geom_bar(aes(fill = prosper.rating...alpha.)) + 
   ylab('Frequency') + ggtitle('Distribution of loan status') + 
-  xlab('Loan Status') + guides(fill=guide_legend(title="Alpha rating"))
+  xlab('Loan Status') + guides(fill=guide_legend(title="Alpha rating")) +
+  scale_fill_brewer(type = 'seq' , palette = 'PuRd')
 
 pi.plot <- subset(loan , !is.na(prosper.rating...alpha.) &! prosper.rating...alpha.
                   %in% c('NC','')) %>%
@@ -1334,7 +1335,9 @@ credit.lines$credit.line.ratio.bin <- cut(credit.lines$credit.line.ratio ,
 ggplot(data = subset(credit.lines,!is.na(credit.line.ratio.bin)) , 
        aes(x = credit.line.ratio.bin , y = borrower.rate)) + 
   geom_boxplot(aes(fill = prosper.rating...alpha.)) +
-  xlab('Total/Open Credit lines') + ggtitle('Total/Open credit lines vs borrower rate')
+  xlab('Total/Open Credit lines') + 
+  ggtitle('Total/Open credit lines vs borrower rate') + 
+  scale_fill_brewer(type = 'seq')
 rm(credit.lines)
 
 ```

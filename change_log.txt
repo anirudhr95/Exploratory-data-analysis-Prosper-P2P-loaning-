@@ -9,9 +9,11 @@ Changes :
 3. Removed text showing next to plots
 
 4. Changed markdown global parameters (although there is block-wise local , echo = FALSE , they don't *technically* OVERRIDE global parameters - since they are one and the same).
+_________________
+5. Removed most bi-variate plots from Uni-variate plots section. I've kept some(if the plots themselves are bi-variate) but the explanation is from Uni-variate aspect of it. i.e If I had used 'fill' parameter and have not explained the 'fill' aspect of it - I've kept the plots in Uni-variate section itself , since , the fill is only for me to get insights (and I haven't explained anything from the optional second parameter). 
 
-5. Removed most bi-variate plots from Uni-variate plots section. I've kept some(if the plots themselves are bi-variate) but the explanation is from Uni-variate aspect of it. i.e If I had used 'fill' parameter and have not explained the 'fill' aspect of it - I've kept the plots in Uni-variate section itself , since , the fill is only for me to get insights (and I haven't explained anything from the optional second parameter).
-
+Also , since I had used some of the bi-variate plots (which were initially in the univariate section) to get insights in the first place , I've seperated bi-variate plots into , Observation (Where I get insights) and plots (Where I explore as I wanted to).
+__________________
 6. Removed unneccessary duplicate plots.
 
 7. Changed plots fill and color scale to 'sequential' where neccessary (if the fill parameter has >6 values , even if sequential filling is applicable , I've ignored , because the difference is not as apparent. I've used this to explain variance in 'alpha' rating , however!)
