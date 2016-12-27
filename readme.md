@@ -20,6 +20,7 @@ I used **R** for EDA. I used **Python** to clean the rename the header section o
 - Plotrix
 - Maps and
 - lubridate
-- 
+
+
 *Full analysis : Udacity_Prosper_EDA.html*
 *Compiled from : /data_code/Udacity_Prosper_EDA.rmd (R markdown)*
